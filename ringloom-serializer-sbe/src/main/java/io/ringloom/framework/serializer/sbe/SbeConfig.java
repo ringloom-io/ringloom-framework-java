@@ -6,4 +6,17 @@ package io.ringloom.framework.serializer.sbe;
  *
  * @param codecPackage the Java package containing the generated codecs
  */
-public record SbeConfig(String codecPackage) {}
+public record SbeConfig(String codecPackage) {
+    public SbeConfig {
+        codecPackage = codecPackage == null ? "" : codecPackage;
+    }
+
+    /**
+     * Returns the default SBE serializer configuration.
+     *
+     * @return the default SBE settings
+     */
+    public static SbeConfig defaults() {
+        return new SbeConfig("");
+    }
+}

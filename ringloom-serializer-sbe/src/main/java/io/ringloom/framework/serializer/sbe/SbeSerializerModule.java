@@ -5,7 +5,11 @@ import io.ringloom.framework.serialization.SerializerModule;
 import io.ringloom.framework.serialization.SerializerRegistry;
 
 /**
- * Serializer module placeholder for SBE-based codecs.
+ * Serializer module for SBE-based codecs.
+ *
+ * <p>SBE codecs are template-specific and are normally wired by generated application code using
+ * {@link SbeCodecFactory}; this module keeps the serializer name discoverable without registering
+ * global flyweight singletons.
  */
 public final class SbeSerializerModule implements SerializerModule {
     @Override
@@ -15,6 +19,17 @@ public final class SbeSerializerModule implements SerializerModule {
 
     @Override
     public void register(SerializerRegistry.Builder builder) {
-        // Concrete generated SBE codecs register their encoders/decoders explicitly.
+        register(builder, SbeConfig.defaults());
+    }
+
+    /**
+     * Registers SBE support for a serializer registry builder.
+     *
+     * @param builder the registry builder
+     * @param config the SBE configuration
+     */
+    public void register(SerializerRegistry.Builder builder, SbeConfig config) {
+        java.util.Objects.requireNonNull(builder, "builder");
+        java.util.Objects.requireNonNull(config, "config");
     }
 }

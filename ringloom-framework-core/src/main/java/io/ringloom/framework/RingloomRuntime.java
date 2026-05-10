@@ -96,6 +96,7 @@ public final class RingloomRuntime implements AutoCloseable {
             Object generatedClient = binding.create(this, lowLevel, serializers);
             generatedClients.put(binding.clientType(), generatedClient);
         }
+        generatedApplication.initializeSerializers(serializers);
         messageExecutionPolicy = createMessageExecutionPolicy();
         generatedApplication.onRuntimeStarted(this);
     }

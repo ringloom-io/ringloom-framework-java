@@ -4,4 +4,5 @@ plugins {
 
 dependencies {
     api(project(":ringloom-framework-core"))
+    api(libs.avajeInject)
 }

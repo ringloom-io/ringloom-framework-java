@@ -2,6 +2,7 @@
 package io.ringloom.framework.generated;
 
 import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.serialization.SerializerRegistry;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +30,13 @@ public interface GeneratedRingloomApplication {
      * @return the generated message dispatcher
      */
     GeneratedMessageDispatcher dispatcher();
+
+    /**
+     * Supplies the runtime serializer registry to generated dispatchers that decode inbound payloads.
+     *
+     * @param serializers the runtime serializer registry
+     */
+    default void initializeSerializers(SerializerRegistry serializers) {}
 
     /**
      * Returns generated partition-key extractors keyed by template id.

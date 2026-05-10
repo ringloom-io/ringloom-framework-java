@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: Apache-2.0
+package io.ringloom.framework;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.ringloom.framework.config.IdleStrategyKind;
+import io.ringloom.framework.dispatch.MessageContext;
+import io.ringloom.framework.eventloop.BackoffIdleStrategy;
+import io.ringloom.framework.eventloop.BusySpinIdleStrategy;
+import io.ringloom.framework.eventloop.IdleStrategies;
+import io.ringloom.framework.eventloop.NoOpIdleStrategy;
+import io.ringloom.framework.eventloop.SleepingIdleStrategy;
+import io.ringloom.framework.eventloop.YieldingIdleStrategy;
+import io.ringloom.framework.generated.GeneratedMessageDispatcher;
+import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.tracing.ClientTraceContext;
+import io.ringloom.framework.tracing.NoopTraceAdapter;
+import io.ringloom.service.RingloomMessage;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+
+final class CoreFrameworkDefaultsTest {
+    @Test
+    void createsBuiltInIdleStrategies() {
+        // Given / When / Then
+        assertThat(IdleStrategies.create(IdleStrategyKind.BUSY_SPIN)).isInstanceOf(BusySpinIdleStrategy.class);
+        assertThat(IdleStrategies.create(IdleStrategyKind.YIELDING)).isInstanceOf(YieldingIdleStrategy.class);
+        assertThat(IdleStrategies.create(IdleStrategyKind.SLEEPING)).isInstanceOf(SleepingIdleStrategy.class);
+        assertThat(IdleStrategies.create(IdleStrategyKind.BACKOFF)).isInstanceOf(BackoffIdleStrategy.class);
+        assertThat(IdleStrategies.create(IdleStrategyKind.NO_OP)).isInstanceOf(NoOpIdleStrategy.class);
+    }
+
+    @Test
+    void validatesIdleStrategyConstructors() {
+        // Given / When / Then
+        assertThatThrownBy(() -> new YieldingIdleStrategy(-1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("spinCount must be non-negative");
+        assertThatThrownBy(() -> new SleepingIdleStrategy(-1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("parkNanos must be non-negative");
+        assertThatThrownBy(() -> new BackoffIdleStrategy(0, 0, 2, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("invalid backoff settings");
+    }
+
+    @Test
+    void generatedDispatcherDefaultsRouteContextAndRejectPlainCallback() {
+        // Given
+        MessageContext context = new MessageContext();
+        GeneratedMessageDispatcher dispatcher = new GeneratedMessageDispatcher() {
+            @Override
+            public int onMessage(RingloomMessage message, MessageContext context) {
+                return message == null ? 7 : 8;
+            }
+        };
+
+        // When / Then
+        assertThat(dispatcher.onContextMessage(context)).isEqualTo(7);
+        assertThatThrownBy(() -> dispatcher.onMessage((RingloomMessage) null))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("Generated dispatch requires a MessageContext");
+    }
+
+    @Test
+    void generatedApplicationDefaultsAreNoOps() {
+        // Given
+        GeneratedMessageDispatcher dispatcher = (message, context) -> 0;
+        GeneratedRingloomApplication application = new GeneratedRingloomApplication() {
+            @Override
+            public String serviceName() {
+                return "orders";
+            }
+
+            @Override
+            public List<io.ringloom.framework.generated.GeneratedClientBinding<?>> clients() {
+                return List.of();
+            }
+
+            @Override
+            public GeneratedMessageDispatcher dispatcher() {
+                return dispatcher;
+            }
+        };
+
+        // When / Then
+        assertThat(application.partitionKeyExtractors()).isEmpty();
+        assertThat(application.requiresCorrelationAwareSends()).isFalse();
+        assertThatCode(() -> application.initializeSerializers(SerializerRegistry.EMPTY))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> application.onRuntimeStarted(null)).doesNotThrowAnyException();
+        assertThatCode(() -> application.onRuntimeStopping(null)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void noOpTraceAdapterReturnsReusableClosableScopes() {
+        // Given
+        NoopTraceAdapter adapter = NoopTraceAdapter.INSTANCE;
+        ClientTraceContext clientContext = new ClientTraceContext("client", "orders", 1, null, 8);
+        MessageContext messageContext = new MessageContext();
+
+        // When / Then
+        assertThat(adapter.onSendStart(clientContext)).isSameAs(adapter.onSendStart(clientContext));
+        assertThat(adapter.onReceiveStart(messageContext)).isSameAs(adapter.onReceiveStart(messageContext));
+        assertThatCode(() -> adapter.onSendStart(clientContext).close()).doesNotThrowAnyException();
+        assertThatCode(() -> adapter.onSendComplete(clientContext, 0)).doesNotThrowAnyException();
+        assertThatCode(() -> adapter.onHandlerComplete(messageContext, 0)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void unavailableMetricsExposeEmptySamplesAndThrowForNativeReaders() {
+        // Given
+        UnavailableRingloomMetrics metrics = UnavailableRingloomMetrics.INSTANCE;
+
+        // When / Then
+        assertThat(metrics.samples()).isEmpty();
+        assertThatThrownBy(() -> metrics.sample("messages"))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("RingLoom native metrics reader ABI is not available");
+        assertThatThrownBy(() -> metrics.ringStats("control"))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("RingLoom native metrics reader ABI is not available");
+    }
+}

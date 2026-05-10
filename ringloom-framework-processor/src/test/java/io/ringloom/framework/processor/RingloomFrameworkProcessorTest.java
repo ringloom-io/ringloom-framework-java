@@ -91,6 +91,59 @@ final class RingloomFrameworkProcessorTest {
         assertThat(success).isFalse();
     }
 
+    @Test
+    void generatesSerializerBackedClientAndHandlerShapes() throws Exception {
+        // Given
+        Path classes = Files.createDirectories(tempDir.resolve("serializer-classes"));
+        Path generated = Files.createDirectories(tempDir.resolve("serializer-generated"));
+
+        // When
+        boolean success = compile(
+                classes,
+                generated,
+                List.of(
+                        source("test.SerializerApp", """
+                package test;
+                import io.ringloom.framework.annotation.RingloomApplication;
+                @RingloomApplication(service = "serializer")
+                public final class SerializerApp {}
+                """),
+                        source("test.PriceRequest", """
+                package test;
+                public record PriceRequest(int id) {}
+                """),
+                        source("test.PricingClient", """
+                package test;
+                import io.ringloom.framework.annotation.RingloomClient;
+                import io.ringloom.framework.annotation.RingloomRequest;
+                @RingloomClient(service = "pricing")
+                public interface PricingClient {
+                  @RingloomRequest(templateId = 21, serializer = "fory")
+                  int send(PriceRequest payload);
+                }
+                """),
+                        source("test.Handlers", """
+                package test;
+                import io.ringloom.framework.annotation.RingloomHandler;
+                import io.ringloom.framework.annotation.RingloomServiceComponent;
+                import io.ringloom.framework.dispatch.MessageContext;
+                @RingloomServiceComponent
+                public final class Handlers {
+                  @RingloomHandler(templateId = 22, serializer = "fory")
+                  public int onMessage(PriceRequest payload, MessageContext context) { return payload.id(); }
+                }
+                """)));
+
+        // Then
+        assertThat(success).isTrue();
+        assertThat(Files.readString(generated.resolve("test/PricingClient_RingloomClient.java")))
+                .contains("MessageEncoder<test.PriceRequest>")
+                .contains("serializers.encoder(\"fory\", test.PriceRequest.class)");
+        assertThat(Files.readString(generated.resolve("test/SerializerApp_RingloomDispatcher.java")))
+                .contains("MessageDecoder<test.PriceRequest>")
+                .contains("serializers.decoder(\"fory\", test.PriceRequest.class)");
+    }
+
     private static boolean compile(Path classes, Path generated, List<SimpleJavaFileObject> sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();

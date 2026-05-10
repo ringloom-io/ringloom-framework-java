@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.lang.foreign.Arena;
 import java.nio.ByteOrder;
+import org.agrona.MutableDirectBuffer;
 import org.junit.jupiter.api.Test;
 
 final class MemorySegmentDirectBufferTest {
@@ -23,6 +24,21 @@ final class MemorySegmentDirectBufferTest {
             // Then
             assertThat(buffer.getLong(0, ByteOrder.LITTLE_ENDIAN)).isEqualTo(42L);
             assertThat(buffer.getInt(8, ByteOrder.BIG_ENDIAN)).isEqualTo(17);
+            assertThat((MutableDirectBuffer) buffer).isSameAs(buffer);
+            assertThat(buffer.segment()).isSameAs(segment);
         }
+    }
+
+    @Test
+    void reusesContextScopedFlyweights() {
+        // Given
+        SbeDecodeContext context = new SbeDecodeContext();
+
+        // When
+        Object first = context.flyweight(Object.class, Object::new);
+        Object second = context.flyweight(Object.class, Object::new);
+
+        // Then
+        assertThat(second).isSameAs(first);
     }
 }

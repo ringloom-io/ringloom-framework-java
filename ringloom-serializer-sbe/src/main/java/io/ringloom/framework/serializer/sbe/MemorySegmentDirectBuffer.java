@@ -2,38 +2,43 @@
 package io.ringloom.framework.serializer.sbe;
 
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.ValueLayout;
-import java.nio.ByteOrder;
 import java.util.Objects;
+import org.agrona.concurrent.UnsafeBuffer;
 
 /**
- * Read-only direct buffer backed by a {@link MemorySegment} for SBE codecs.
+ * Reusable Agrona direct buffer view over native {@link MemorySegment} memory for SBE codecs.
+ *
+ * <p>The wrapped segment is borrowed; callers must not retain this adapter beyond the lifetime of
+ * the segment owner, such as a RingLoom message callback or active buffer claim.
  */
-public class MemorySegmentDirectBuffer {
-    protected MemorySegment segment = MemorySegment.NULL;
+public class MemorySegmentDirectBuffer extends UnsafeBuffer {
+    private MemorySegment segment = MemorySegment.NULL;
 
+    public MemorySegmentDirectBuffer() {
+        super(0L, 0);
+    }
+
+    /**
+     * Wraps a native memory segment without copying.
+     *
+     * @param segment the native segment to expose as an Agrona buffer
+     * @return this reusable adapter
+     */
     public MemorySegmentDirectBuffer wrap(MemorySegment segment) {
         this.segment = Objects.requireNonNull(segment, "segment");
+        if (!segment.isNative()) {
+            throw new IllegalArgumentException("SBE MemorySegment buffers require native memory");
+        }
+        super.wrap(segment.address(), Math.toIntExact(segment.byteSize()));
         return this;
     }
 
-    public byte getByte(long index) {
-        return segment.get(ValueLayout.JAVA_BYTE, index);
-    }
-
-    public short getShort(long index, ByteOrder order) {
-        return segment.get(ValueLayout.JAVA_SHORT.withOrder(order), index);
-    }
-
-    public int getInt(long index, ByteOrder order) {
-        return segment.get(ValueLayout.JAVA_INT.withOrder(order), index);
-    }
-
-    public long getLong(long index, ByteOrder order) {
-        return segment.get(ValueLayout.JAVA_LONG.withOrder(order), index);
-    }
-
-    public long capacity() {
-        return segment.byteSize();
+    /**
+     * Returns the currently wrapped segment.
+     *
+     * @return the borrowed segment
+     */
+    public MemorySegment segment() {
+        return segment;
     }
 }

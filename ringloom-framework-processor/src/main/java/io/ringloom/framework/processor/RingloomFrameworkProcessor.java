@@ -106,8 +106,16 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             if (request.responseTemplateId() != -1) {
                 validateTemplate(method, request.responseTemplateId());
             }
-            if (!isMemorySegmentOnly(method) || !returnsInt(method)) {
-                error(method, "currently supported generated client shape is int method(MemorySegment payload)");
+            if (!returnsInt(method)) {
+                error(method, "currently supported generated client shape must return int status");
+                continue;
+            }
+            if (!isSingleParameter(method)) {
+                error(method, "currently supported generated client shape is int method(payload)");
+                continue;
+            }
+            if (!isMemorySegmentOnly(method) && request.serializer().isBlank()) {
+                error(method, "serializer-backed client methods must declare @RingloomRequest.serializer");
             }
         }
     }
@@ -124,19 +132,26 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     writer.write("package " + pkg + ";\n\n");
                 }
                 writer.write("import io.ringloom.framework.RingloomRuntime;\n");
+                writer.write("import io.ringloom.framework.serialization.EncodeContext;\n");
+                writer.write("import io.ringloom.framework.serialization.MessageEncoder;\n");
                 writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
+                writer.write("import io.ringloom.framework.status.RingloomHandlerStatus;\n");
                 writer.write("import io.ringloom.service.BufferClaim;\n");
                 writer.write("import io.ringloom.service.RingloomStatus;\n");
                 writer.write("import java.lang.foreign.MemorySegment;\n");
                 writer.write("import java.lang.foreign.ValueLayout;\n\n");
                 writer.write("public final class " + generatedName + " implements " + simpleName + " {\n");
                 writer.write("  private final io.ringloom.service.RingloomClient lowLevelClient;\n");
+                writer.write("  private final SerializerRegistry serializers;\n");
                 writer.write("  private final BufferClaim claim;\n");
+                writer.write("  private final EncodeContext encodeContext = new EncodeContext();\n");
                 writer.write(
                         "  public " + generatedName
                                 + "(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {\n");
                 writer.write(
                         "    this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, \"lowLevelClient\");\n");
+                writer.write(
+                        "    this.serializers = java.util.Objects.requireNonNull(serializers, \"serializers\");\n");
                 writer.write("    this.claim = lowLevelClient.newClaim();\n");
                 writer.write("  }\n");
                 for (Element enclosed : client.getEnclosedElements()) {
@@ -154,14 +169,40 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     private void writeClientMethod(Writer writer, ExecutableElement method) throws IOException {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
         String methodName = method.getSimpleName().toString();
-        writer.write("  @Override public int " + methodName + "(MemorySegment payload) {\n");
-        writer.write("    MemorySegment segment = payload == null ? MemorySegment.NULL : payload;\n");
-        writer.write(
-                "    int status = lowLevelClient.tryClaim(" + request.templateId() + ", segment.byteSize(), claim);\n");
-        writer.write("    if (status != RingloomStatus.OK) return status;\n");
-        writer.write(
-                "    MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, claim.payloadSegment(), ValueLayout.JAVA_BYTE, 0, segment.byteSize());\n");
-        writer.write("    return claim.commit();\n");
+        String payloadType = method.getParameters().getFirst().asType().toString();
+        String payloadName = method.getParameters().getFirst().getSimpleName().toString();
+        writer.write("  @Override public int " + methodName + "(" + payloadType + " " + payloadName + ") {\n");
+        if (payloadType.equals("java.lang.foreign.MemorySegment")) {
+            writer.write("    MemorySegment segment = " + payloadName + " == null ? MemorySegment.NULL : " + payloadName
+                    + ";\n");
+            writer.write("    int status = lowLevelClient.tryClaim(" + request.templateId()
+                    + ", segment.byteSize(), claim);\n");
+            writer.write("    if (status != RingloomStatus.OK) return status;\n");
+            writer.write(
+                    "    MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, claim.payloadSegment(), ValueLayout.JAVA_BYTE, 0, segment.byteSize());\n");
+            writer.write("    return claim.commit();\n");
+        } else {
+            writer.write("    MessageEncoder<" + payloadType + "> encoder = serializers.encoder(\""
+                    + escape(request.serializer()) + "\", " + payloadType + ".class);\n");
+            writer.write("    if (encoder == null) return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
+            writer.write("    final int payloadLength;\n");
+            writer.write("    try {\n");
+            writer.write("      payloadLength = encoder.encodedLength(" + payloadName + ", encodeContext);\n");
+            writer.write("    } catch (RuntimeException ex) {\n");
+            writer.write("      return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
+            writer.write("    }\n");
+            writer.write(
+                    "    int status = lowLevelClient.tryClaim(" + request.templateId() + ", payloadLength, claim);\n");
+            writer.write("    if (status != RingloomStatus.OK) return status;\n");
+            writer.write("    try {\n");
+            writer.write("      encoder.encode(" + payloadName
+                    + ", encodeContext.buffer().wrap(claim.payloadSegment()), encodeContext);\n");
+            writer.write("      return claim.commit();\n");
+            writer.write("    } catch (RuntimeException ex) {\n");
+            writer.write("      claim.abort();\n");
+            writer.write("      return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
+            writer.write("    }\n");
+        }
         writer.write("  }\n");
     }
 
@@ -211,22 +252,34 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 }
                 writer.write("import io.ringloom.framework.dispatch.MessageContext;\n");
                 writer.write("import io.ringloom.framework.generated.GeneratedMessageDispatcher;\n");
+                writer.write("import io.ringloom.framework.serialization.DecodeContext;\n");
+                writer.write("import io.ringloom.framework.serialization.MessageDecoder;\n");
+                writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
                 writer.write("import io.ringloom.framework.status.RingloomHandlerStatus;\n");
                 writer.write("import io.ringloom.service.RingloomMessage;\n");
                 writer.write("import java.lang.foreign.MemorySegment;\n\n");
                 writer.write("public final class " + dispatcherName + " implements GeneratedMessageDispatcher {\n");
+                writer.write("  private SerializerRegistry serializers = SerializerRegistry.EMPTY;\n");
+                writer.write("  private final DecodeContext decodeContext = new DecodeContext();\n");
                 for (int i = 0; i < handlers.size(); i++) {
                     writer.write(
                             "  private final " + handlers.get(i).component().getQualifiedName() + " h" + i + " = new "
                                     + handlers.get(i).component().getQualifiedName() + "();\n");
                 }
+                writer.write("  public void initializeSerializers(SerializerRegistry serializers) {\n");
+                writer.write(
+                        "    this.serializers = java.util.Objects.requireNonNull(serializers, \"serializers\");\n");
+                writer.write("  }\n");
                 writer.write("  @Override public int onMessage(RingloomMessage message, MessageContext context) {\n");
                 writer.write("    return switch (context.templateId()) {\n");
                 for (int i = 0; i < handlers.size(); i++) {
                     Handler handler = handlers.get(i);
                     writer.write("      case " + handler.templateId() + " -> ");
                     writeHandlerCall(writer, "h" + i, handler.method());
-                    writer.write(";\n");
+                    if (!isBlockHandlerCall(handler.method())) {
+                        writer.write(";");
+                    }
+                    writer.write("\n");
                 }
                 writer.write("      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;\n");
                 writer.write("    };\n");
@@ -239,7 +292,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     }
 
     private void writeHandlerCall(Writer writer, String field, ExecutableElement method) throws IOException {
-        String prefix = returnsInt(method) ? "" : "( " + field + "." + method.getSimpleName() + "(";
+        VariableElement payloadParameter = serializerPayloadParameter(method);
+        if (payloadParameter != null) {
+            writeSerializerHandlerCall(writer, field, method, payloadParameter);
+            return;
+        }
         if (!returnsInt(method)) {
             writer.write("{ " + field + "." + method.getSimpleName() + "(");
         } else {
@@ -265,6 +322,49 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
+    private void writeSerializerHandlerCall(
+            Writer writer, String field, ExecutableElement method, VariableElement payloadParameter)
+            throws IOException {
+        RingloomHandler handler = method.getAnnotation(RingloomHandler.class);
+        String payloadType = payloadParameter.asType().toString();
+        writer.write("{ MessageDecoder<" + payloadType + "> decoder = serializers.decoder(\""
+                + escape(handler.serializer()) + "\", " + payloadType + ".class);");
+        writer.write(" if (decoder == null) yield RingloomHandlerStatus.SERIALIZATION_ERROR;");
+        writer.write(" final " + payloadType + " decoded;");
+        writer.write(
+                " try { decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);");
+        writer.write(" } catch (RuntimeException ex) { yield RingloomHandlerStatus.SERIALIZATION_ERROR; }");
+        if (!returnsInt(method)) {
+            writer.write(" " + field + "." + method.getSimpleName() + "(");
+        } else {
+            writer.write(" yield " + field + "." + method.getSimpleName() + "(");
+        }
+        List<? extends VariableElement> parameters = method.getParameters();
+        for (int i = 0; i < parameters.size(); i++) {
+            if (i > 0) {
+                writer.write(", ");
+            }
+            VariableElement parameter = parameters.get(i);
+            if (parameter == payloadParameter) {
+                writer.write("decoded");
+            } else {
+                String type = parameter.asType().toString();
+                if (type.equals("io.ringloom.service.RingloomMessage")) {
+                    writer.write("message");
+                } else if (type.equals("io.ringloom.framework.dispatch.MessageContext")) {
+                    writer.write("context");
+                } else if (type.equals("java.lang.foreign.MemorySegment")) {
+                    writer.write("context.payloadSegment()");
+                }
+            }
+        }
+        writer.write(");");
+        if (!returnsInt(method)) {
+            writer.write(" yield RingloomHandlerStatus.OK;");
+        }
+        writer.write(" }");
+    }
+
     private void generateApplicationClass(
             String pkg,
             String appName,
@@ -286,7 +386,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
                 writer.write("import java.util.List;\n\n");
                 writer.write("public final class " + appName + " implements GeneratedRingloomApplication {\n");
-                writer.write("  private final GeneratedMessageDispatcher dispatcher = new " + dispatcherName + "();\n");
+                writer.write("  private final " + dispatcherName + " dispatcher = new " + dispatcherName + "();\n");
                 writer.write("  @Override public String serviceName() { return \"" + service + "\"; }\n");
                 writer.write("  @Override public List<GeneratedClientBinding<?>> clients() { return List.of(");
                 for (int i = 0; i < clients.size(); i++) {
@@ -307,6 +407,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     writer.write("}");
                 }
                 writer.write("); }\n");
+                writer.write(
+                        "  @Override public void initializeSerializers(SerializerRegistry serializers) { dispatcher.initializeSerializers(serializers); }\n");
                 writer.write("  @Override public GeneratedMessageDispatcher dispatcher() { return dispatcher; }\n");
                 writer.write("}\n");
             }
@@ -357,13 +459,23 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         if (!returnsInt(method) && !method.getReturnType().toString().equals("void")) {
             error(method, "RingLoom handler must return int status or void");
         }
+        RingloomHandler handler = method.getAnnotation(RingloomHandler.class);
+        int serializerPayloads = 0;
         for (VariableElement parameter : method.getParameters()) {
             String type = parameter.asType().toString();
             if (!type.equals("io.ringloom.service.RingloomMessage")
                     && !type.equals("io.ringloom.framework.dispatch.MessageContext")
                     && !type.equals("java.lang.foreign.MemorySegment")) {
-                error(method, "unsupported RingLoom handler parameter type " + type);
+                serializerPayloads++;
+                if (handler == null || handler.serializer().isBlank()) {
+                    error(
+                            method,
+                            "serializer-backed handler parameter " + type + " requires @RingloomHandler.serializer");
+                }
             }
+        }
+        if (serializerPayloads > 1) {
+            error(method, "RingLoom handler may only declare one serializer-backed payload parameter");
         }
     }
 
@@ -372,8 +484,32 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 && method.getParameters().getFirst().asType().toString().equals("java.lang.foreign.MemorySegment");
     }
 
+    private boolean isSingleParameter(ExecutableElement method) {
+        return method.getParameters().size() == 1;
+    }
+
     private boolean returnsInt(ExecutableElement method) {
         return method.getReturnType().toString().equals("int");
+    }
+
+    private VariableElement serializerPayloadParameter(ExecutableElement method) {
+        for (VariableElement parameter : method.getParameters()) {
+            if (!isSpecialHandlerParameter(parameter)) {
+                return parameter;
+            }
+        }
+        return null;
+    }
+
+    private boolean isSpecialHandlerParameter(VariableElement parameter) {
+        String type = parameter.asType().toString();
+        return type.equals("io.ringloom.service.RingloomMessage")
+                || type.equals("io.ringloom.framework.dispatch.MessageContext")
+                || type.equals("java.lang.foreign.MemorySegment");
+    }
+
+    private boolean isBlockHandlerCall(ExecutableElement method) {
+        return !returnsInt(method) || serializerPayloadParameter(method) != null;
     }
 
     private void validateTemplate(Element element, int templateId) {
@@ -403,6 +539,10 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             return fallback;
         }
         return annotation.service();
+    }
+
+    private static String escape(String text) {
+        return text.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private void error(Element element, String message) {

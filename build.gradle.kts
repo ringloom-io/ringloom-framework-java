@@ -61,6 +61,7 @@ subprojects {
         useJUnitPlatform()
         jvmArgs(
             "--enable-native-access=ALL-UNNAMED",
+            "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED",
             "-Xshare:off",
             "-XX:+EnableDynamicAgentLoading",
         )
