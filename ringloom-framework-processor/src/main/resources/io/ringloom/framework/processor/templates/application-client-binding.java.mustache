@@ -1,0 +1,19 @@
+        new GeneratedClientBinding<{{{clientName}}}>() {
+          @Override
+          public Class<{{{clientName}}}> clientType() {
+            return {{{clientName}}}.class;
+          }
+
+          @Override
+          public String targetServiceName() {
+            return "{{targetServiceName}}";
+          }
+
+          @Override
+          public {{{clientName}}} create(
+              RingloomRuntime runtime,
+              io.ringloom.service.RingloomClient lowLevelClient,
+              SerializerRegistry serializers) {
+            return new {{{generatedClientName}}}(runtime, lowLevelClient, serializers);
+          }
+        }{{comma}}

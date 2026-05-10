@@ -37,6 +37,7 @@ import javax.tools.StandardLocation;
  * Annotation processor that generates RingLoom clients, dispatchers, and application metadata.
  */
 public final class RingloomFrameworkProcessor extends AbstractProcessor {
+    private final TemplateRenderer templates = new TemplateRenderer();
     private boolean generated;
 
     @Override
@@ -126,89 +127,45 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         String generatedName = simpleName + "_RingloomClient";
         String qualifiedName = pkg.isEmpty() ? generatedName : pkg + "." + generatedName;
         try {
-            JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, client);
-            try (Writer writer = file.openWriter()) {
-                if (!pkg.isEmpty()) {
-                    writer.write("package " + pkg + ";\n\n");
+            StringBuilder methods = new StringBuilder();
+            for (Element enclosed : client.getEnclosedElements()) {
+                if (enclosed.getKind() == ElementKind.METHOD) {
+                    methods.append(clientMethodSource((ExecutableElement) enclosed));
                 }
-                writer.write("import io.ringloom.framework.RingloomRuntime;\n");
-                writer.write("import io.ringloom.framework.serialization.EncodeContext;\n");
-                writer.write("import io.ringloom.framework.serialization.MessageEncoder;\n");
-                writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
-                writer.write("import io.ringloom.framework.status.RingloomHandlerStatus;\n");
-                writer.write("import io.ringloom.service.BufferClaim;\n");
-                writer.write("import io.ringloom.service.RingloomStatus;\n");
-                writer.write("import java.lang.foreign.MemorySegment;\n");
-                writer.write("import java.lang.foreign.ValueLayout;\n\n");
-                writer.write("public final class " + generatedName + " implements " + simpleName + " {\n");
-                writer.write("  private final io.ringloom.service.RingloomClient lowLevelClient;\n");
-                writer.write("  private final SerializerRegistry serializers;\n");
-                writer.write("  private final BufferClaim claim;\n");
-                writer.write("  private final EncodeContext encodeContext = new EncodeContext();\n");
-                writer.write(
-                        "  public " + generatedName
-                                + "(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {\n");
-                writer.write(
-                        "    this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, \"lowLevelClient\");\n");
-                writer.write(
-                        "    this.serializers = java.util.Objects.requireNonNull(serializers, \"serializers\");\n");
-                writer.write("    this.claim = lowLevelClient.newClaim();\n");
-                writer.write("  }\n");
-                for (Element enclosed : client.getEnclosedElements()) {
-                    if (enclosed.getKind() == ElementKind.METHOD) {
-                        writeClientMethod(writer, (ExecutableElement) enclosed);
-                    }
-                }
-                writer.write("}\n");
             }
+            writeSourceFile(
+                    qualifiedName,
+                    client,
+                    templates.render(
+                            "client.java.mustache",
+                            Map.of(
+                                    "packageName", pkg,
+                                    "generatedName", generatedName,
+                                    "simpleName", simpleName,
+                                    "methodSources", methods.toString())));
         } catch (IOException ex) {
             error(client, "failed to generate client: " + ex.getMessage());
         }
     }
 
-    private void writeClientMethod(Writer writer, ExecutableElement method) throws IOException {
+    private String clientMethodSource(ExecutableElement method) throws IOException {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
-        String methodName = method.getSimpleName().toString();
         String payloadType = method.getParameters().getFirst().asType().toString();
-        String payloadName = method.getParameters().getFirst().getSimpleName().toString();
-        writer.write("  @Override public int " + methodName + "(" + payloadType + " " + payloadName + ") {\n");
+        Map<String, Object> model = Map.of(
+                "methodName", method.getSimpleName().toString(),
+                "payloadType", payloadType,
+                "payloadName", method.getParameters().getFirst().getSimpleName().toString(),
+                "templateId", request.templateId(),
+                "serializer", escape(request.serializer()));
         if (payloadType.equals("java.lang.foreign.MemorySegment")) {
-            writer.write("    MemorySegment segment = " + payloadName + " == null ? MemorySegment.NULL : " + payloadName
-                    + ";\n");
-            writer.write("    int status = lowLevelClient.tryClaim(" + request.templateId()
-                    + ", segment.byteSize(), claim);\n");
-            writer.write("    if (status != RingloomStatus.OK) return status;\n");
-            writer.write(
-                    "    MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, claim.payloadSegment(), ValueLayout.JAVA_BYTE, 0, segment.byteSize());\n");
-            writer.write("    return claim.commit();\n");
-        } else {
-            writer.write("    MessageEncoder<" + payloadType + "> encoder = serializers.encoder(\""
-                    + escape(request.serializer()) + "\", " + payloadType + ".class);\n");
-            writer.write("    if (encoder == null) return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
-            writer.write("    final int payloadLength;\n");
-            writer.write("    try {\n");
-            writer.write("      payloadLength = encoder.encodedLength(" + payloadName + ", encodeContext);\n");
-            writer.write("    } catch (RuntimeException ex) {\n");
-            writer.write("      return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
-            writer.write("    }\n");
-            writer.write(
-                    "    int status = lowLevelClient.tryClaim(" + request.templateId() + ", payloadLength, claim);\n");
-            writer.write("    if (status != RingloomStatus.OK) return status;\n");
-            writer.write("    try {\n");
-            writer.write("      encoder.encode(" + payloadName
-                    + ", encodeContext.buffer().wrap(claim.payloadSegment()), encodeContext);\n");
-            writer.write("      return claim.commit();\n");
-            writer.write("    } catch (RuntimeException ex) {\n");
-            writer.write("      claim.abort();\n");
-            writer.write("      return RingloomHandlerStatus.SERIALIZATION_ERROR;\n");
-            writer.write("    }\n");
+            return templates.render("client-memory-method.java.mustache", model);
         }
-        writer.write("  }\n");
+        return templates.render("client-serializer-method.java.mustache", model);
     }
 
     private void generateApplication(
             TypeElement application, List<TypeElement> clients, List<TypeElement> components, Elements elements) {
-        Map<Integer, ExecutableElement> templates = new HashMap<>();
+        Map<Integer, ExecutableElement> handlerTemplateIds = new HashMap<>();
         List<Handler> handlers = new ArrayList<>();
         for (TypeElement component : components) {
             for (Element enclosed : component.getEnclosedElements()) {
@@ -220,7 +177,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     continue;
                 }
                 validateTemplate(method, annotation.templateId());
-                ExecutableElement previous = templates.putIfAbsent(annotation.templateId(), method);
+                ExecutableElement previous = handlerTemplateIds.putIfAbsent(annotation.templateId(), method);
                 if (previous != null) {
                     error(method, "duplicate RingLoom handler template id " + annotation.templateId());
                 }
@@ -245,124 +202,85 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     private void generateDispatcher(String pkg, String dispatcherName, List<Handler> handlers, TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? dispatcherName : pkg + "." + dispatcherName;
         try {
-            JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, origin);
-            try (Writer writer = file.openWriter()) {
-                if (!pkg.isEmpty()) {
-                    writer.write("package " + pkg + ";\n\n");
-                }
-                writer.write("import io.ringloom.framework.dispatch.MessageContext;\n");
-                writer.write("import io.ringloom.framework.generated.GeneratedMessageDispatcher;\n");
-                writer.write("import io.ringloom.framework.serialization.DecodeContext;\n");
-                writer.write("import io.ringloom.framework.serialization.MessageDecoder;\n");
-                writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
-                writer.write("import io.ringloom.framework.status.RingloomHandlerStatus;\n");
-                writer.write("import io.ringloom.service.RingloomMessage;\n");
-                writer.write("import java.lang.foreign.MemorySegment;\n\n");
-                writer.write("public final class " + dispatcherName + " implements GeneratedMessageDispatcher {\n");
-                writer.write("  private SerializerRegistry serializers = SerializerRegistry.EMPTY;\n");
-                writer.write("  private final DecodeContext decodeContext = new DecodeContext();\n");
-                for (int i = 0; i < handlers.size(); i++) {
-                    writer.write(
-                            "  private final " + handlers.get(i).component().getQualifiedName() + " h" + i + " = new "
-                                    + handlers.get(i).component().getQualifiedName() + "();\n");
-                }
-                writer.write("  public void initializeSerializers(SerializerRegistry serializers) {\n");
-                writer.write(
-                        "    this.serializers = java.util.Objects.requireNonNull(serializers, \"serializers\");\n");
-                writer.write("  }\n");
-                writer.write("  @Override public int onMessage(RingloomMessage message, MessageContext context) {\n");
-                writer.write("    return switch (context.templateId()) {\n");
-                for (int i = 0; i < handlers.size(); i++) {
-                    Handler handler = handlers.get(i);
-                    writer.write("      case " + handler.templateId() + " -> ");
-                    writeHandlerCall(writer, "h" + i, handler.method());
-                    if (!isBlockHandlerCall(handler.method())) {
-                        writer.write(";");
-                    }
-                    writer.write("\n");
-                }
-                writer.write("      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;\n");
-                writer.write("    };\n");
-                writer.write("  }\n");
-                writer.write("}\n");
+            List<Map<String, Object>> fields = new ArrayList<>();
+            StringBuilder cases = new StringBuilder();
+            for (int i = 0; i < handlers.size(); i++) {
+                Handler handler = handlers.get(i);
+                String fieldName = "h" + i;
+                fields.add(Map.of(
+                        "componentType", handler.component().getQualifiedName().toString(), "fieldName", fieldName));
+                cases.append(dispatcherCaseSource(fieldName, handler));
             }
+            writeSourceFile(
+                    qualifiedName,
+                    origin,
+                    templates.render(
+                            "dispatcher.java.mustache",
+                            Map.of(
+                                    "packageName", pkg,
+                                    "dispatcherName", dispatcherName,
+                                    "handlerFields", fields,
+                                    "caseSources", cases.toString())));
         } catch (IOException ex) {
             error(origin, "failed to generate dispatcher: " + ex.getMessage());
         }
     }
 
-    private void writeHandlerCall(Writer writer, String field, ExecutableElement method) throws IOException {
+    private String dispatcherCaseSource(String fieldName, Handler handler) throws IOException {
+        ExecutableElement method = handler.method();
         VariableElement payloadParameter = serializerPayloadParameter(method);
         if (payloadParameter != null) {
-            writeSerializerHandlerCall(writer, field, method, payloadParameter);
-            return;
+            return serializerDispatcherCaseSource(fieldName, handler, payloadParameter);
         }
-        if (!returnsInt(method)) {
-            writer.write("{ " + field + "." + method.getSimpleName() + "(");
-        } else {
-            writer.write(field + "." + method.getSimpleName() + "(");
-        }
-        List<? extends VariableElement> parameters = method.getParameters();
-        for (int i = 0; i < parameters.size(); i++) {
-            if (i > 0) {
-                writer.write(", ");
-            }
-            String type = parameters.get(i).asType().toString();
-            if (type.equals("io.ringloom.service.RingloomMessage")) {
-                writer.write("message");
-            } else if (type.equals("io.ringloom.framework.dispatch.MessageContext")) {
-                writer.write("context");
-            } else if (type.equals("java.lang.foreign.MemorySegment")) {
-                writer.write("context.payloadSegment()");
-            }
-        }
-        writer.write(")");
-        if (!returnsInt(method)) {
-            writer.write("; yield RingloomHandlerStatus.OK; }");
-        }
+        return templates.render(
+                "dispatcher-direct-case.java.mustache",
+                Map.of(
+                        "templateId", handler.templateId(),
+                        "returnsInt", returnsInt(method),
+                        "fieldName", fieldName,
+                        "methodName", method.getSimpleName().toString(),
+                        "arguments", handlerArguments(method, null)));
     }
 
-    private void writeSerializerHandlerCall(
-            Writer writer, String field, ExecutableElement method, VariableElement payloadParameter)
+    private String serializerDispatcherCaseSource(String fieldName, Handler handler, VariableElement payloadParameter)
             throws IOException {
-        RingloomHandler handler = method.getAnnotation(RingloomHandler.class);
+        ExecutableElement method = handler.method();
+        RingloomHandler annotation = method.getAnnotation(RingloomHandler.class);
         String payloadType = payloadParameter.asType().toString();
-        writer.write("{ MessageDecoder<" + payloadType + "> decoder = serializers.decoder(\""
-                + escape(handler.serializer()) + "\", " + payloadType + ".class);");
-        writer.write(" if (decoder == null) yield RingloomHandlerStatus.SERIALIZATION_ERROR;");
-        writer.write(" final " + payloadType + " decoded;");
-        writer.write(
-                " try { decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);");
-        writer.write(" } catch (RuntimeException ex) { yield RingloomHandlerStatus.SERIALIZATION_ERROR; }");
-        if (!returnsInt(method)) {
-            writer.write(" " + field + "." + method.getSimpleName() + "(");
-        } else {
-            writer.write(" yield " + field + "." + method.getSimpleName() + "(");
-        }
+        return templates.render(
+                "dispatcher-serializer-case.java.mustache",
+                Map.of(
+                        "templateId", handler.templateId(),
+                        "returnsInt", returnsInt(method),
+                        "fieldName", fieldName,
+                        "methodName", method.getSimpleName().toString(),
+                        "payloadType", payloadType,
+                        "serializer", escape(annotation.serializer()),
+                        "arguments", handlerArguments(method, payloadParameter)));
+    }
+
+    private String handlerArguments(ExecutableElement method, VariableElement serializerPayloadParameter) {
+        StringBuilder arguments = new StringBuilder();
         List<? extends VariableElement> parameters = method.getParameters();
         for (int i = 0; i < parameters.size(); i++) {
             if (i > 0) {
-                writer.write(", ");
+                arguments.append(", ");
             }
             VariableElement parameter = parameters.get(i);
-            if (parameter == payloadParameter) {
-                writer.write("decoded");
+            if (parameter == serializerPayloadParameter) {
+                arguments.append("decoded");
             } else {
                 String type = parameter.asType().toString();
                 if (type.equals("io.ringloom.service.RingloomMessage")) {
-                    writer.write("message");
+                    arguments.append("message");
                 } else if (type.equals("io.ringloom.framework.dispatch.MessageContext")) {
-                    writer.write("context");
+                    arguments.append("context");
                 } else if (type.equals("java.lang.foreign.MemorySegment")) {
-                    writer.write("context.payloadSegment()");
+                    arguments.append("context.payloadSegment()");
                 }
             }
         }
-        writer.write(");");
-        if (!returnsInt(method)) {
-            writer.write(" yield RingloomHandlerStatus.OK;");
-        }
-        writer.write(" }");
+        return arguments.toString();
     }
 
     private void generateApplicationClass(
@@ -374,44 +292,34 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
         try {
-            JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, origin);
-            try (Writer writer = file.openWriter()) {
-                if (!pkg.isEmpty()) {
-                    writer.write("package " + pkg + ";\n\n");
-                }
-                writer.write("import io.ringloom.framework.RingloomRuntime;\n");
-                writer.write("import io.ringloom.framework.generated.GeneratedClientBinding;\n");
-                writer.write("import io.ringloom.framework.generated.GeneratedMessageDispatcher;\n");
-                writer.write("import io.ringloom.framework.generated.GeneratedRingloomApplication;\n");
-                writer.write("import io.ringloom.framework.serialization.SerializerRegistry;\n");
-                writer.write("import java.util.List;\n\n");
-                writer.write("public final class " + appName + " implements GeneratedRingloomApplication {\n");
-                writer.write("  private final " + dispatcherName + " dispatcher = new " + dispatcherName + "();\n");
-                writer.write("  @Override public String serviceName() { return \"" + service + "\"; }\n");
-                writer.write("  @Override public List<GeneratedClientBinding<?>> clients() { return List.of(");
-                for (int i = 0; i < clients.size(); i++) {
-                    if (i > 0) {
-                        writer.write(", ");
-                    }
-                    TypeElement client = clients.get(i);
-                    String clientName = client.getQualifiedName().toString();
-                    String generatedClient = clientName + "_RingloomClient";
-                    String target = client.getAnnotation(RingloomClient.class).service();
-                    writer.write("new GeneratedClientBinding<" + clientName + ">() {");
-                    writer.write(" public Class<" + clientName + "> clientType() { return " + clientName + ".class; }");
-                    writer.write(" public String targetServiceName() { return \"" + target + "\"; }");
-                    writer.write(
-                            " public " + clientName
-                                    + " create(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {");
-                    writer.write(" return new " + generatedClient + "(runtime, lowLevelClient, serializers); }");
-                    writer.write("}");
-                }
-                writer.write("); }\n");
-                writer.write(
-                        "  @Override public void initializeSerializers(SerializerRegistry serializers) { dispatcher.initializeSerializers(serializers); }\n");
-                writer.write("  @Override public GeneratedMessageDispatcher dispatcher() { return dispatcher; }\n");
-                writer.write("}\n");
+            StringBuilder clientBindings = new StringBuilder();
+            for (int i = 0; i < clients.size(); i++) {
+                TypeElement client = clients.get(i);
+                String clientName = client.getQualifiedName().toString();
+                clientBindings.append(templates.render(
+                        "application-client-binding.java.mustache",
+                        Map.of(
+                                "clientName",
+                                clientName,
+                                "generatedClientName",
+                                clientName + "_RingloomClient",
+                                "targetServiceName",
+                                escape(client.getAnnotation(RingloomClient.class)
+                                        .service()),
+                                "comma",
+                                i + 1 == clients.size() ? "" : ",")));
             }
+            writeSourceFile(
+                    qualifiedName,
+                    origin,
+                    templates.render(
+                            "application.java.mustache",
+                            Map.of(
+                                    "packageName", pkg,
+                                    "appName", appName,
+                                    "dispatcherName", dispatcherName,
+                                    "serviceName", escape(service),
+                                    "clientBindingSources", clientBindings.toString())));
         } catch (IOException ex) {
             error(origin, "failed to generate application: " + ex.getMessage());
         }
@@ -420,21 +328,21 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     private void generateProvider(String pkg, String providerName, String appName, TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? providerName : pkg + "." + providerName;
         try {
-            JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, origin);
-            try (Writer writer = file.openWriter()) {
-                if (!pkg.isEmpty()) {
-                    writer.write("package " + pkg + ";\n\n");
-                }
-                writer.write("import io.ringloom.framework.generated.GeneratedRingloomApplication;\n");
-                writer.write("import io.ringloom.framework.generated.GeneratedRingloomApplicationProvider;\n\n");
-                writer.write(
-                        "public final class " + providerName + " implements GeneratedRingloomApplicationProvider {\n");
-                writer.write("  @Override public GeneratedRingloomApplication application() { return new " + appName
-                        + "(); }\n");
-                writer.write("}\n");
-            }
+            writeSourceFile(
+                    qualifiedName,
+                    origin,
+                    templates.render(
+                            "provider.java.mustache",
+                            Map.of("packageName", pkg, "providerName", providerName, "appName", appName)));
         } catch (IOException ex) {
             error(origin, "failed to generate provider: " + ex.getMessage());
+        }
+    }
+
+    private void writeSourceFile(String qualifiedName, Element origin, String source) throws IOException {
+        JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, origin);
+        try (Writer writer = file.openWriter()) {
+            writer.write(source);
         }
     }
 
@@ -506,10 +414,6 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return type.equals("io.ringloom.service.RingloomMessage")
                 || type.equals("io.ringloom.framework.dispatch.MessageContext")
                 || type.equals("java.lang.foreign.MemorySegment");
-    }
-
-    private boolean isBlockHandlerCall(ExecutableElement method) {
-        return !returnsInt(method) || serializerPayloadParameter(method) != null;
     }
 
     private void validateTemplate(Element element, int templateId) {

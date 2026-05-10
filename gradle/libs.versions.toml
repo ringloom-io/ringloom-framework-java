@@ -3,6 +3,7 @@ ringloomJavaBindings = "0.1.2"
 agrona = "2.4.1"
 avajeInject = "12.5"
 fory = "0.17.0"
+jmustache = "1.16"
 snakeYamlEngine = "2.9"
 assertj = "3.27.7"
 junit = "6.0.3"
@@ -16,6 +17,7 @@ assertj = { group = "org.assertj", name = "assertj-core", version.ref = "assertj
 agrona = { group = "org.agrona", name = "agrona", version.ref = "agrona" }
 avajeInject = { group = "io.avaje", name = "avaje-inject", version.ref = "avajeInject" }
 foryCore = { group = "org.apache.fory", name = "fory-core", version.ref = "fory" }
+jmustache = { group = "com.samskivert", name = "jmustache", version.ref = "jmustache" }
 junitBom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }
 junitJupiter = { group = "org.junit.jupiter", name = "junit-jupiter" }
 junitPlatformLauncher = { group = "org.junit.platform", name = "junit-platform-launcher" }

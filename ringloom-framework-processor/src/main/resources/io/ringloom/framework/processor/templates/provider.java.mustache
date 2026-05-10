@@ -1,0 +1,11 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.generated.GeneratedRingloomApplicationProvider;
+
+public final class {{providerName}} implements GeneratedRingloomApplicationProvider {
+  @Override
+  public GeneratedRingloomApplication application() {
+    return new {{appName}}();
+  }
+}

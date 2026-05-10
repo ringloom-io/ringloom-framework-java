@@ -1,0 +1,28 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.serialization.EncodeContext;
+import io.ringloom.framework.serialization.MessageEncoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.service.BufferClaim;
+import io.ringloom.service.RingloomStatus;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+
+public final class {{generatedName}} implements {{simpleName}} {
+  private final io.ringloom.service.RingloomClient lowLevelClient;
+  private final SerializerRegistry serializers;
+  private final BufferClaim claim;
+  private final EncodeContext encodeContext = new EncodeContext();
+
+  public {{generatedName}}(
+      RingloomRuntime runtime,
+      io.ringloom.service.RingloomClient lowLevelClient,
+      SerializerRegistry serializers) {
+    this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, "lowLevelClient");
+    this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
+    this.claim = lowLevelClient.newClaim();
+  }
+{{{methodSources}}}
+}

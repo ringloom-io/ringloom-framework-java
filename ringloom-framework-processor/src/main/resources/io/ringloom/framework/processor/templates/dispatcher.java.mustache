@@ -1,0 +1,29 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.dispatch.MessageContext;
+import io.ringloom.framework.generated.GeneratedMessageDispatcher;
+import io.ringloom.framework.serialization.DecodeContext;
+import io.ringloom.framework.serialization.MessageDecoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.service.RingloomMessage;
+import java.lang.foreign.MemorySegment;
+
+public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
+  private SerializerRegistry serializers = SerializerRegistry.EMPTY;
+  private final DecodeContext decodeContext = new DecodeContext();
+{{#handlerFields}}
+  private final {{{componentType}}} {{fieldName}} = new {{{componentType}}}();
+{{/handlerFields}}
+
+  public void initializeSerializers(SerializerRegistry serializers) {
+    this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
+  }
+
+  @Override
+  public int onMessage(RingloomMessage message, MessageContext context) {
+    return switch (context.templateId()) {
+{{{caseSources}}}      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
+    };
+  }
+}

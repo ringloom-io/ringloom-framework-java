@@ -1,0 +1,33 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.generated.GeneratedClientBinding;
+import io.ringloom.framework.generated.GeneratedMessageDispatcher;
+import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import java.util.List;
+
+public final class {{appName}} implements GeneratedRingloomApplication {
+  private final {{dispatcherName}} dispatcher = new {{dispatcherName}}();
+
+  @Override
+  public String serviceName() {
+    return "{{serviceName}}";
+  }
+
+  @Override
+  public List<GeneratedClientBinding<?>> clients() {
+    return List.of(
+{{{clientBindingSources}}}    );
+  }
+
+  @Override
+  public void initializeSerializers(SerializerRegistry serializers) {
+    dispatcher.initializeSerializers(serializers);
+  }
+
+  @Override
+  public GeneratedMessageDispatcher dispatcher() {
+    return dispatcher;
+  }
+}

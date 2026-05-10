@@ -1,0 +1,1 @@
+      case {{templateId}} -> {{#returnsInt}}{{fieldName}}.{{methodName}}({{{arguments}}});{{/returnsInt}}{{^returnsInt}}{ {{fieldName}}.{{methodName}}({{{arguments}}}); yield RingloomHandlerStatus.OK; }{{/returnsInt}}

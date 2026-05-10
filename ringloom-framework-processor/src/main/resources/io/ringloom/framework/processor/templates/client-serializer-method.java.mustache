@@ -1,0 +1,26 @@
+
+  @Override
+  public int {{methodName}}({{{payloadType}}} {{payloadName}}) {
+    MessageEncoder<{{{payloadType}}}> encoder =
+        serializers.encoder("{{serializer}}", {{{payloadType}}}.class);
+    if (encoder == null) {
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+    final int payloadLength;
+    try {
+      payloadLength = encoder.encodedLength({{payloadName}}, encodeContext);
+    } catch (RuntimeException ex) {
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+    int status = lowLevelClient.tryClaim({{templateId}}, payloadLength, claim);
+    if (status != RingloomStatus.OK) {
+      return status;
+    }
+    try {
+      encoder.encode({{payloadName}}, encodeContext.buffer().wrap(claim.payloadSegment()), encodeContext);
+      return claim.commit();
+    } catch (RuntimeException ex) {
+      claim.abort();
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+  }

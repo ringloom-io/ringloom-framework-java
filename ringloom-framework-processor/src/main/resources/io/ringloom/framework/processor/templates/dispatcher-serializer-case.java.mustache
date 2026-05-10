@@ -1,0 +1,20 @@
+      case {{templateId}} -> {
+        MessageDecoder<{{{payloadType}}}> decoder =
+            serializers.decoder("{{serializer}}", {{{payloadType}}}.class);
+        if (decoder == null) {
+          yield RingloomHandlerStatus.SERIALIZATION_ERROR;
+        }
+        final {{{payloadType}}} decoded;
+        try {
+          decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);
+        } catch (RuntimeException ex) {
+          yield RingloomHandlerStatus.SERIALIZATION_ERROR;
+        }
+{{#returnsInt}}
+        yield {{fieldName}}.{{methodName}}({{{arguments}}});
+{{/returnsInt}}
+{{^returnsInt}}
+        {{fieldName}}.{{methodName}}({{{arguments}}});
+        yield RingloomHandlerStatus.OK;
+{{/returnsInt}}
+      }

@@ -1,0 +1,18 @@
+
+  @Override
+  public int {{methodName}}({{{payloadType}}} {{payloadName}}) {
+    MemorySegment segment = {{payloadName}} == null ? MemorySegment.NULL : {{payloadName}};
+    int status = lowLevelClient.tryClaim({{templateId}}, segment.byteSize(), claim);
+    if (status != RingloomStatus.OK) {
+      return status;
+    }
+    MemorySegment.copy(
+        segment,
+        ValueLayout.JAVA_BYTE,
+        0,
+        claim.payloadSegment(),
+        ValueLayout.JAVA_BYTE,
+        0,
+        segment.byteSize());
+    return claim.commit();
+  }
