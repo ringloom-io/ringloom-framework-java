@@ -4,6 +4,9 @@ package io.ringloom.framework.eventloop;
 import java.util.Arrays;
 import java.util.Objects;
 
+/**
+ * {@link Agent} that delegates to multiple child agents in sequence.
+ */
 public final class CompositeAgent implements Agent {
     private final Agent[] agents;
     private final String name;

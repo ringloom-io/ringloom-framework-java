@@ -3,9 +3,11 @@ package io.ringloom.framework.eventloop;
 
 import io.ringloom.framework.config.IdleStrategyKind;
 
+/**
+ * Factory for built-in {@link IdleStrategy} implementations.
+ */
 public final class IdleStrategies {
-    private IdleStrategies() {
-    }
+    private IdleStrategies() {}
 
     public static IdleStrategy create(IdleStrategyKind kind) {
         return switch (kind) {

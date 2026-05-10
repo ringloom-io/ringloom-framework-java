@@ -3,13 +3,18 @@ package io.ringloom.framework.tracing;
 
 import io.ringloom.framework.dispatch.MessageContext;
 
+/**
+ * No-op tracing adapter used when tracing is disabled.
+ */
 public final class NoopTraceAdapter implements TraceAdapter {
+    /**
+     * Shared singleton instance.
+     */
     public static final NoopTraceAdapter INSTANCE = new NoopTraceAdapter();
-    private static final TraceScope SCOPE = () -> {
-    };
 
-    private NoopTraceAdapter() {
-    }
+    private static final TraceScope SCOPE = () -> {};
+
+    private NoopTraceAdapter() {}
 
     @Override
     public TraceScope onSendStart(ClientTraceContext context) {
@@ -22,10 +27,8 @@ public final class NoopTraceAdapter implements TraceAdapter {
     }
 
     @Override
-    public void onSendComplete(ClientTraceContext context, int status) {
-    }
+    public void onSendComplete(ClientTraceContext context, int status) {}
 
     @Override
-    public void onHandlerComplete(MessageContext context, int status) {
-    }
+    public void onHandlerComplete(MessageContext context, int status) {}
 }

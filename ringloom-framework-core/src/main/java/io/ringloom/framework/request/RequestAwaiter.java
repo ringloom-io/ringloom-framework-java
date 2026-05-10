@@ -3,6 +3,9 @@ package io.ringloom.framework.request;
 
 import java.util.concurrent.locks.LockSupport;
 
+/**
+ * Lightweight thread parker used by blocking request APIs.
+ */
 public final class RequestAwaiter {
     private volatile Thread waiter;
     private volatile boolean complete;

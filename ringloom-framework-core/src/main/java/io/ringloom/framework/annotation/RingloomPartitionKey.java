@@ -6,7 +6,9 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
-@Target({ ElementType.METHOD, ElementType.PARAMETER })
+@Target({ElementType.METHOD, ElementType.PARAMETER})
 @Retention(RetentionPolicy.SOURCE)
-public @interface RingloomPartitionKey {
-}
+/**
+ * Marks a method or parameter as contributing the partition key for partitioned message execution.
+ */
+public @interface RingloomPartitionKey {}

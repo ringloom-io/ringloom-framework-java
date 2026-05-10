@@ -27,6 +27,9 @@ import java.util.Set;
 import org.snakeyaml.engine.v2.api.Load;
 import org.snakeyaml.engine.v2.api.LoadSettings;
 
+/**
+ * Strict YAML-backed {@link io.ringloom.framework.config.RingloomConfigLoader} implementation.
+ */
 public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
     @Override
     public boolean supports(Path path) {
@@ -41,36 +44,40 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         requireKeys(root, "root", Set.of("ringloom"));
         Map<String, Object> ringloom = map(root.get("ringloom"), "ringloom");
         requireKeys(ringloom, "ringloom", Set.of("service", "runtime", "serializers", "clients"));
-        RingloomServiceRuntimeConfig service = service(map(required(ringloom, "service", "ringloom.service"), "ringloom.service"));
+        RingloomServiceRuntimeConfig service =
+                service(map(required(ringloom, "service", "ringloom.service"), "ringloom.service"));
         RingloomRuntimeConfig runtime = runtime(optionalMap(ringloom.get("runtime"), "ringloom.runtime"));
-        RingloomSerializerConfig serializers = serializers(optionalMap(ringloom.get("serializers"), "ringloom.serializers"));
-        Map<String, RingloomClientRuntimeConfig> clients = clients(optionalMap(ringloom.get("clients"), "ringloom.clients"));
+        RingloomSerializerConfig serializers =
+                serializers(optionalMap(ringloom.get("serializers"), "ringloom.serializers"));
+        Map<String, RingloomClientRuntimeConfig> clients =
+                clients(optionalMap(ringloom.get("clients"), "ringloom.clients"));
         return new RingloomApplicationConfig(service, runtime, serializers, clients);
     }
 
     private static RingloomServiceRuntimeConfig service(Map<String, Object> values) {
-        requireKeys(values, "ringloom.service", Set.of(
-            "name",
-            "storagePath",
-            "group",
-            "brokerNodeId",
-            "blockingMode",
-            "controlBufferLength",
-            "messagesBufferLength",
-            "heartbeatTimeoutMillis",
-            "leaderElectionEnabled"
-        ));
+        requireKeys(
+                values,
+                "ringloom.service",
+                Set.of(
+                        "name",
+                        "storagePath",
+                        "group",
+                        "brokerNodeId",
+                        "blockingMode",
+                        "controlBufferLength",
+                        "messagesBufferLength",
+                        "heartbeatTimeoutMillis",
+                        "leaderElectionEnabled"));
         return new RingloomServiceRuntimeConfig(
-            string(required(values, "name", "ringloom.service.name"), "ringloom.service.name"),
-            string(values.get("storagePath"), "ringloom.service.storagePath"),
-            string(values.get("group"), "ringloom.service.group"),
-            (short) integer(values.get("brokerNodeId"), "ringloom.service.brokerNodeId", 0),
-            bool(values.get("blockingMode"), false),
-            integer(values.get("heartbeatTimeoutMillis"), "ringloom.service.heartbeatTimeoutMillis", 0),
-            longValue(values.get("controlBufferLength"), "ringloom.service.controlBufferLength", 0),
-            longValue(values.get("messagesBufferLength"), "ringloom.service.messagesBufferLength", 0),
-            bool(values.get("leaderElectionEnabled"), false)
-        );
+                string(required(values, "name", "ringloom.service.name"), "ringloom.service.name"),
+                string(values.get("storagePath"), "ringloom.service.storagePath"),
+                string(values.get("group"), "ringloom.service.group"),
+                (short) integer(values.get("brokerNodeId"), "ringloom.service.brokerNodeId", 0),
+                bool(values.get("blockingMode"), false),
+                integer(values.get("heartbeatTimeoutMillis"), "ringloom.service.heartbeatTimeoutMillis", 0),
+                longValue(values.get("controlBufferLength"), "ringloom.service.controlBufferLength", 0),
+                longValue(values.get("messagesBufferLength"), "ringloom.service.messagesBufferLength", 0),
+                bool(values.get("leaderElectionEnabled"), false));
     }
 
     private static RingloomRuntimeConfig runtime(Map<String, Object> values) {
@@ -78,13 +85,18 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
             return RingloomRuntimeConfig.defaults();
         }
         requireKeys(values, "ringloom.runtime", Set.of("mode", "control", "messages", "requests", "lifecycle"));
-        RuntimeMode mode = enumValue(RuntimeMode.class, string(values.get("mode"), "ringloom.runtime.mode"), RuntimeMode.DEDICATED);
+        RuntimeMode mode = enumValue(
+                RuntimeMode.class, string(values.get("mode"), "ringloom.runtime.mode"), RuntimeMode.DEDICATED);
         RingloomEventLoopConfig control = eventLoop(optionalMap(values.get("control"), "ringloom.runtime.control"));
         Map<String, Object> messages = optionalMap(values.get("messages"), "ringloom.runtime.messages");
         RingloomEventLoopConfig messageLoop = eventLoop(messages);
-        MessageExecutionConfig execution = execution(optionalMap(messages.get("execution"), "ringloom.runtime.messages.execution"));
+        MessageExecutionConfig execution =
+                execution(optionalMap(messages.get("execution"), "ringloom.runtime.messages.execution"));
         RequestRuntimeConfig requests = requests(optionalMap(values.get("requests"), "ringloom.runtime.requests"));
-        boolean shutdownHook = bool(optionalMap(values.get("lifecycle"), "ringloom.runtime.lifecycle").get("shutdownHook"), true);
+        boolean shutdownHook = bool(
+                optionalMap(values.get("lifecycle"), "ringloom.runtime.lifecycle")
+                        .get("shutdownHook"),
+                true);
         return new RingloomRuntimeConfig(mode, control, messageLoop, execution, requests, shutdownHook);
     }
 
@@ -103,37 +115,38 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
             return MessageExecutionConfig.consumerThread();
         }
         requireKeys(values, "ringloom.runtime.messages.execution", Set.of("mode", "partitioned", "virtualThreads"));
-        MessageExecutionMode mode = executionMode(string(values.get("mode"), "ringloom.runtime.messages.execution.mode"));
+        MessageExecutionMode mode =
+                executionMode(string(values.get("mode"), "ringloom.runtime.messages.execution.mode"));
         PartitionedExecutionConfig partitioned = partitioned(optionalMap(values.get("partitioned"), "partitioned"));
-        VirtualThreadExecutionConfig virtualThreads = new VirtualThreadExecutionConfig(
-            integer(optionalMap(values.get("virtualThreads"), "virtualThreads").get("maxInFlight"), "maxInFlight", 10_000)
-        );
+        VirtualThreadExecutionConfig virtualThreads = new VirtualThreadExecutionConfig(integer(
+                optionalMap(values.get("virtualThreads"), "virtualThreads").get("maxInFlight"), "maxInFlight", 10_000));
         return new MessageExecutionConfig(mode, partitioned, virtualThreads);
     }
 
     private static PartitionedExecutionConfig partitioned(Map<String, Object> values) {
         return new PartitionedExecutionConfig(
-            integer(values.get("workers"), "workers", 1),
-            integer(values.get("queueCapacity"), "queueCapacity", 1024),
-            integer(values.get("maxPayloadBytes"), "maxPayloadBytes", 4096),
-            backpressure(string(values.get("backpressure"), "backpressure"))
-        );
+                integer(values.get("workers"), "workers", 1),
+                integer(values.get("queueCapacity"), "queueCapacity", 1024),
+                integer(values.get("maxPayloadBytes"), "maxPayloadBytes", 4096),
+                backpressure(string(values.get("backpressure"), "backpressure")));
     }
 
     private static RequestRuntimeConfig requests(Map<String, Object> values) {
         return new RequestRuntimeConfig(
-            integer(values.get("maxPending"), "requests.maxPending", 65_536),
-            Duration.ofMillis(longValue(values.get("defaultTimeoutMillis"), "requests.defaultTimeoutMillis", 5_000)),
-            bool(values.get("pooledPendingRequests"), true)
-        );
+                integer(values.get("maxPending"), "requests.maxPending", 65_536),
+                Duration.ofMillis(
+                        longValue(values.get("defaultTimeoutMillis"), "requests.defaultTimeoutMillis", 5_000)),
+                bool(values.get("pooledPendingRequests"), true));
     }
 
     private static RingloomSerializerConfig serializers(Map<String, Object> values) {
         requireKeys(values, "ringloom.serializers", Set.of("default", "entries"));
         String defaultSerializer = string(values.get("default"), "ringloom.serializers.default");
         Map<String, Map<String, Object>> entries = new HashMap<>();
-        for (Map.Entry<String, Object> entry : optionalMap(values.get("entries"), "ringloom.serializers.entries").entrySet()) {
-            entries.put(entry.getKey(), optionalMap(entry.getValue(), "ringloom.serializers.entries." + entry.getKey()));
+        for (Map.Entry<String, Object> entry : optionalMap(values.get("entries"), "ringloom.serializers.entries")
+                .entrySet()) {
+            entries.put(
+                    entry.getKey(), optionalMap(entry.getValue(), "ringloom.serializers.entries." + entry.getKey()));
         }
         return new RingloomSerializerConfig(defaultSerializer, entries);
     }
@@ -143,12 +156,15 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         for (Map.Entry<String, Object> entry : values.entrySet()) {
             Map<String, Object> client = optionalMap(entry.getValue(), "ringloom.clients." + entry.getKey());
             requireKeys(client, "ringloom.clients." + entry.getKey(), Set.of("service", "routing", "serializer"));
-            result.put(entry.getKey(), new RingloomClientRuntimeConfig(
-                entry.getKey(),
-                string(required(client, "service", "ringloom.clients." + entry.getKey() + ".service"), "service"),
-                routing(string(client.get("routing"), "routing")),
-                string(client.get("serializer"), "serializer")
-            ));
+            result.put(
+                    entry.getKey(),
+                    new RingloomClientRuntimeConfig(
+                            entry.getKey(),
+                            string(
+                                    required(client, "service", "ringloom.clients." + entry.getKey() + ".service"),
+                                    "service"),
+                            routing(string(client.get("routing"), "routing")),
+                            string(client.get("serializer"), "serializer")));
         }
         return result;
     }

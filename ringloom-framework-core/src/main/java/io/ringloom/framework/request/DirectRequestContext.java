@@ -3,6 +3,9 @@ package io.ringloom.framework.request;
 
 import io.ringloom.framework.DirectSendContext;
 
+/**
+ * Reusable state holder for direct request/response APIs.
+ */
 public final class DirectRequestContext {
     private final DirectSendContext sendContext = new DirectSendContext();
     private PendingRequest pendingRequest;

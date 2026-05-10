@@ -6,6 +6,9 @@ import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 import java.util.Objects;
 
+/**
+ * Read-only direct buffer backed by a {@link MemorySegment} for SBE codecs.
+ */
 public class MemorySegmentDirectBuffer {
     protected MemorySegment segment = MemorySegment.NULL;
 

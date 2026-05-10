@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.request;
 
+/**
+ * Tracks pending request/response interactions for generated client code.
+ */
 public interface RequestResponseRegistry {
     PendingRequest acquire();
 

@@ -5,6 +5,9 @@ import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.service.RingloomMessage;
 import java.lang.foreign.MemorySegment;
 
+/**
+ * Mutable message metadata passed to handlers and dispatch policies.
+ */
 public final class MessageContext {
     private RingloomRuntime runtime;
     private long correlationId;
@@ -16,8 +19,7 @@ public final class MessageContext {
     private int flags;
     private MemorySegment payloadSegment = MemorySegment.NULL;
 
-    public MessageContext() {
-    }
+    public MessageContext() {}
 
     public MessageContext(RingloomRuntime runtime) {
         this.runtime = runtime;
@@ -39,15 +41,14 @@ public final class MessageContext {
     }
 
     public void updateCopied(
-        long correlationId,
-        short sourceNodeId,
-        short sourceServiceId,
-        short targetNodeId,
-        short targetServiceId,
-        int templateId,
-        int flags,
-        MemorySegment payloadSegment
-    ) {
+            long correlationId,
+            short sourceNodeId,
+            short sourceServiceId,
+            short targetNodeId,
+            short targetServiceId,
+            int templateId,
+            int flags,
+            MemorySegment payloadSegment) {
         this.correlationId = correlationId;
         this.sourceNodeId = sourceNodeId;
         this.sourceServiceId = sourceServiceId;

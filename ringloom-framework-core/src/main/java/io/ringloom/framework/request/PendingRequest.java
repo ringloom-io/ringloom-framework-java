@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.request;
 
+/**
+ * Mutable state for a single in-flight request tracked by the runtime.
+ */
 public final class PendingRequest {
     private final int slot;
     private long generation;
@@ -58,13 +61,12 @@ public final class PendingRequest {
     }
 
     public PendingRequest prepare(
-        long correlationId,
-        int expectedResponseTemplateId,
-        ResponseCallback<?> callback,
-        Object userContext,
-        long deadlineNanos,
-        RequestAwaiter awaiter
-    ) {
+            long correlationId,
+            int expectedResponseTemplateId,
+            ResponseCallback<?> callback,
+            Object userContext,
+            long deadlineNanos,
+            RequestAwaiter awaiter) {
         this.correlationId = correlationId;
         this.expectedResponseTemplateId = expectedResponseTemplateId;
         this.callback = callback;

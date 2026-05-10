@@ -8,16 +8,18 @@ import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import java.util.Objects;
 
+/**
+ * Minimal Avaje integration that bootstraps a RingLoom application from injected dependencies.
+ */
 public final class RingloomAvajeModule {
     private final RingloomApplicationConfig config;
     private final GeneratedRingloomApplication generatedApplication;
     private final SerializerRegistry serializers;
 
     public RingloomAvajeModule(
-        RingloomApplicationConfig config,
-        GeneratedRingloomApplication generatedApplication,
-        SerializerRegistry serializers
-    ) {
+            RingloomApplicationConfig config,
+            GeneratedRingloomApplication generatedApplication,
+            SerializerRegistry serializers) {
         this.config = Objects.requireNonNull(config, "config");
         this.generatedApplication = Objects.requireNonNull(generatedApplication, "generatedApplication");
         this.serializers = Objects.requireNonNull(serializers, "serializers");
@@ -25,8 +27,8 @@ public final class RingloomAvajeModule {
 
     public RingloomApplication start() {
         return RingloomBootstrap.fromConfig(config)
-            .generatedApplication(generatedApplication)
-            .serializerRegistry(serializers)
-            .start();
+                .generatedApplication(generatedApplication)
+                .serializerRegistry(serializers)
+                .start();
     }
 }

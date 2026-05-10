@@ -8,6 +8,14 @@ import java.lang.annotation.Target;
 
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
+/**
+ * Declares a generated client interface for another RingLoom service.
+ */
 public @interface RingloomClient {
+    /**
+     * Identifies the target service that the generated client should connect to.
+     *
+     * @return the logical RingLoom service name
+     */
     String service();
 }

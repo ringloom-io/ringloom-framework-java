@@ -4,6 +4,9 @@ package io.ringloom.framework.serializer.sbe;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteOrder;
 
+/**
+ * Mutable extension of {@link MemorySegmentDirectBuffer} for SBE encoders.
+ */
 public final class MemorySegmentMutableDirectBuffer extends MemorySegmentDirectBuffer {
     public void putByte(long index, byte value) {
         segment.set(ValueLayout.JAVA_BYTE, index, value);

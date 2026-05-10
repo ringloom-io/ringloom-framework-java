@@ -1,0 +1,26 @@
+[versions]
+ringloomJavaBindings = "0.1.2"
+snakeYamlEngine = "2.9"
+assertj = "3.27.7"
+junit = "6.0.3"
+mockito = "5.23.0"
+palantirJavaFormat = "2.90.0"
+slf4j = "2.0.17"
+spotless = "8.4.0"
+
+[libraries]
+assertj = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }
+junitBom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }
+junitJupiter = { group = "org.junit.jupiter", name = "junit-jupiter" }
+junitPlatformLauncher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+mockitoCore = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+ringloomJavaBindings = { group = "io.ringloom", name = "ringloom-java-bindings", version.ref = "ringloomJavaBindings" }
+slf4jApi = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
+slf4jSimple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
+snakeYamlEngine = { group = "org.snakeyaml", name = "snakeyaml-engine", version.ref = "snakeYamlEngine" }
+
+[bundles]
+testLibs = ["junitJupiter", "assertj", "mockitoCore"]
+
+[plugins]
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.eventloop;
 
+/**
+ * Idle strategy that spins briefly and then yields the thread.
+ */
 public final class YieldingIdleStrategy implements IdleStrategy {
     private final int spinCount;
     private int idleCount;

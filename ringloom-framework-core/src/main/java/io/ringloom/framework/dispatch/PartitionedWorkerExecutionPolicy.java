@@ -15,6 +15,9 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
+/**
+ * Message execution policy that copies payloads to partition-affine worker threads.
+ */
 public final class PartitionedWorkerExecutionPolicy implements MessageExecutionPolicy {
     private final PartitionKeyExtractor extractor;
     private final Worker[] workers;
@@ -22,12 +25,11 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public PartitionedWorkerExecutionPolicy(
-        GeneratedMessageDispatcher dispatcher,
-        PartitionKeyExtractor extractor,
-        PartitionedExecutionConfig config,
-        ThreadFactory threadFactory,
-        IdleStrategy idleStrategy
-    ) {
+            GeneratedMessageDispatcher dispatcher,
+            PartitionKeyExtractor extractor,
+            PartitionedExecutionConfig config,
+            ThreadFactory threadFactory,
+            IdleStrategy idleStrategy) {
         Objects.requireNonNull(dispatcher, "dispatcher");
         this.extractor = Objects.requireNonNull(extractor, "extractor");
         Objects.requireNonNull(config, "config");
@@ -82,7 +84,11 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
         private final AtomicBoolean running = new AtomicBoolean(true);
         private volatile Thread thread;
 
-        Worker(GeneratedMessageDispatcher dispatcher, int queueCapacity, int maxPayloadBytes, IdleStrategy idleStrategy) {
+        Worker(
+                GeneratedMessageDispatcher dispatcher,
+                int queueCapacity,
+                int maxPayloadBytes,
+                IdleStrategy idleStrategy) {
             this.dispatcher = dispatcher;
             this.queue = new ArrayBlockingQueue<>(queueCapacity);
             this.maxPayloadBytes = maxPayloadBytes;
@@ -96,15 +102,14 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
             byte[] payload = new byte[(int) message.payloadLength()];
             MemorySegment.copy(message.payloadSegment(), ValueLayout.JAVA_BYTE, 0, payload, 0, payload.length);
             return new Slot(
-                message.correlationId(),
-                message.sourceNodeId(),
-                message.sourceServiceId(),
-                message.targetNodeId(),
-                message.targetServiceId(),
-                message.templateId(),
-                message.flags(),
-                payload
-            );
+                    message.correlationId(),
+                    message.sourceNodeId(),
+                    message.sourceServiceId(),
+                    message.targetNodeId(),
+                    message.targetServiceId(),
+                    message.templateId(),
+                    message.flags(),
+                    payload);
         }
 
         boolean offer(Slot slot) {
@@ -121,15 +126,14 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                     continue;
                 }
                 context.updateCopied(
-                    slot.correlationId,
-                    slot.sourceNodeId,
-                    slot.sourceServiceId,
-                    slot.targetNodeId,
-                    slot.targetServiceId,
-                    slot.templateId,
-                    slot.flags,
-                    MemorySegment.ofArray(slot.payload)
-                );
+                        slot.correlationId,
+                        slot.sourceNodeId,
+                        slot.sourceServiceId,
+                        slot.targetNodeId,
+                        slot.targetServiceId,
+                        slot.templateId,
+                        slot.flags,
+                        MemorySegment.ofArray(slot.payload));
                 dispatcher.onContextMessage(context);
                 idleStrategy.idle(1);
             }
@@ -151,14 +155,12 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
     }
 
     private record Slot(
-        long correlationId,
-        short sourceNodeId,
-        short sourceServiceId,
-        short targetNodeId,
-        short targetServiceId,
-        int templateId,
-        int flags,
-        byte[] payload
-    ) {
-    }
+            long correlationId,
+            short sourceNodeId,
+            short sourceServiceId,
+            short targetNodeId,
+            short targetServiceId,
+            int templateId,
+            int flags,
+            byte[] payload) {}
 }

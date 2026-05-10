@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.serialization;
 
+/**
+ * Encodes an application value into an outbound RingLoom message payload.
+ *
+ * @param <T> the value type encoded by this encoder
+ */
 public interface MessageEncoder<T> {
     int templateId();
 

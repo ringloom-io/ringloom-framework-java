@@ -6,6 +6,9 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 
+/**
+ * Single-threaded loop that repeatedly executes an {@link Agent} and idles between iterations.
+ */
 public final class EventLoop implements AutoCloseable, Runnable {
     private final String name;
     private final Agent agent;

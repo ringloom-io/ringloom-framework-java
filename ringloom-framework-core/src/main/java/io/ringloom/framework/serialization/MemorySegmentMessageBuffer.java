@@ -4,6 +4,9 @@ package io.ringloom.framework.serialization;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 
+/**
+ * Message buffer backed by a {@link MemorySegment}.
+ */
 public final class MemorySegmentMessageBuffer implements ReadableMessageBuffer, WritableMessageBuffer {
     private MemorySegment segment;
 

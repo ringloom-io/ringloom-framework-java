@@ -4,6 +4,9 @@ package io.ringloom.framework.serializer.fory;
 import io.ringloom.framework.serialization.SerializerModule;
 import io.ringloom.framework.serialization.SerializerRegistry;
 
+/**
+ * Serializer module placeholder for Apache Fory integrations.
+ */
 public final class ForySerializerModule implements SerializerModule {
     @Override
     public String name() {

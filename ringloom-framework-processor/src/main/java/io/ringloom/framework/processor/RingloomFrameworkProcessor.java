@@ -26,7 +26,6 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
-import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
@@ -34,18 +33,20 @@ import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 
 @SupportedSourceVersion(SourceVersion.RELEASE_25)
+/**
+ * Annotation processor that generates RingLoom clients, dispatchers, and application metadata.
+ */
 public final class RingloomFrameworkProcessor extends AbstractProcessor {
     private boolean generated;
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
         return Set.of(
-            RingloomApplication.class.getCanonicalName(),
-            RingloomClient.class.getCanonicalName(),
-            RingloomRequest.class.getCanonicalName(),
-            RingloomServiceComponent.class.getCanonicalName(),
-            RingloomHandler.class.getCanonicalName()
-        );
+                RingloomApplication.class.getCanonicalName(),
+                RingloomClient.class.getCanonicalName(),
+                RingloomRequest.class.getCanonicalName(),
+                RingloomServiceComponent.class.getCanonicalName(),
+                RingloomHandler.class.getCanonicalName());
     }
 
     @Override
@@ -68,7 +69,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         if (!components.isEmpty() || !applications.isEmpty()) {
             TypeElement application = applications.isEmpty() ? components.getFirst() : applications.getFirst();
             if (applications.size() > 1) {
-                error(applications.get(1), "multiple @RingloomApplication types require an explicit single application");
+                error(
+                        applications.get(1),
+                        "multiple @RingloomApplication types require an explicit single application");
                 return true;
             }
             generateApplication(application, clients, components, elements);
@@ -88,7 +91,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             }
             ExecutableElement method = (ExecutableElement) enclosed;
             Set<Modifier> modifiers = method.getModifiers();
-            if (modifiers.contains(Modifier.DEFAULT) || modifiers.contains(Modifier.STATIC) || modifiers.contains(Modifier.PRIVATE)) {
+            if (modifiers.contains(Modifier.DEFAULT)
+                    || modifiers.contains(Modifier.STATIC)
+                    || modifiers.contains(Modifier.PRIVATE)) {
                 error(method, "RingLoom client methods must be abstract instance methods");
                 continue;
             }
@@ -127,8 +132,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 writer.write("public final class " + generatedName + " implements " + simpleName + " {\n");
                 writer.write("  private final io.ringloom.service.RingloomClient lowLevelClient;\n");
                 writer.write("  private final BufferClaim claim;\n");
-                writer.write("  public " + generatedName + "(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {\n");
-                writer.write("    this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, \"lowLevelClient\");\n");
+                writer.write(
+                        "  public " + generatedName
+                                + "(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {\n");
+                writer.write(
+                        "    this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, \"lowLevelClient\");\n");
                 writer.write("    this.claim = lowLevelClient.newClaim();\n");
                 writer.write("  }\n");
                 for (Element enclosed : client.getEnclosedElements()) {
@@ -148,19 +156,17 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         String methodName = method.getSimpleName().toString();
         writer.write("  @Override public int " + methodName + "(MemorySegment payload) {\n");
         writer.write("    MemorySegment segment = payload == null ? MemorySegment.NULL : payload;\n");
-        writer.write("    int status = lowLevelClient.tryClaim(" + request.templateId() + ", segment.byteSize(), claim);\n");
+        writer.write(
+                "    int status = lowLevelClient.tryClaim(" + request.templateId() + ", segment.byteSize(), claim);\n");
         writer.write("    if (status != RingloomStatus.OK) return status;\n");
-        writer.write("    MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, claim.payloadSegment(), ValueLayout.JAVA_BYTE, 0, segment.byteSize());\n");
+        writer.write(
+                "    MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, claim.payloadSegment(), ValueLayout.JAVA_BYTE, 0, segment.byteSize());\n");
         writer.write("    return claim.commit();\n");
         writer.write("  }\n");
     }
 
     private void generateApplication(
-        TypeElement application,
-        List<TypeElement> clients,
-        List<TypeElement> components,
-        Elements elements
-    ) {
+            TypeElement application, List<TypeElement> clients, List<TypeElement> components, Elements elements) {
         Map<Integer, ExecutableElement> templates = new HashMap<>();
         List<Handler> handlers = new ArrayList<>();
         for (TypeElement component : components) {
@@ -210,7 +216,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 writer.write("import java.lang.foreign.MemorySegment;\n\n");
                 writer.write("public final class " + dispatcherName + " implements GeneratedMessageDispatcher {\n");
                 for (int i = 0; i < handlers.size(); i++) {
-                    writer.write("  private final " + handlers.get(i).component().getQualifiedName() + " h" + i + " = new " + handlers.get(i).component().getQualifiedName() + "();\n");
+                    writer.write(
+                            "  private final " + handlers.get(i).component().getQualifiedName() + " h" + i + " = new "
+                                    + handlers.get(i).component().getQualifiedName() + "();\n");
                 }
                 writer.write("  @Override public int onMessage(RingloomMessage message, MessageContext context) {\n");
                 writer.write("    return switch (context.templateId()) {\n");
@@ -258,13 +266,12 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     }
 
     private void generateApplicationClass(
-        String pkg,
-        String appName,
-        String dispatcherName,
-        String service,
-        List<TypeElement> clients,
-        TypeElement origin
-    ) {
+            String pkg,
+            String appName,
+            String dispatcherName,
+            String service,
+            List<TypeElement> clients,
+            TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
         try {
             JavaFileObject file = processingEnv.getFiler().createSourceFile(qualifiedName, origin);
@@ -293,7 +300,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     writer.write("new GeneratedClientBinding<" + clientName + ">() {");
                     writer.write(" public Class<" + clientName + "> clientType() { return " + clientName + ".class; }");
                     writer.write(" public String targetServiceName() { return \"" + target + "\"; }");
-                    writer.write(" public " + clientName + " create(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {");
+                    writer.write(
+                            " public " + clientName
+                                    + " create(RingloomRuntime runtime, io.ringloom.service.RingloomClient lowLevelClient, SerializerRegistry serializers) {");
                     writer.write(" return new " + generatedClient + "(runtime, lowLevelClient, serializers); }");
                     writer.write("}");
                 }
@@ -316,8 +325,10 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 }
                 writer.write("import io.ringloom.framework.generated.GeneratedRingloomApplication;\n");
                 writer.write("import io.ringloom.framework.generated.GeneratedRingloomApplicationProvider;\n\n");
-                writer.write("public final class " + providerName + " implements GeneratedRingloomApplicationProvider {\n");
-                writer.write("  @Override public GeneratedRingloomApplication application() { return new " + appName + "(); }\n");
+                writer.write(
+                        "public final class " + providerName + " implements GeneratedRingloomApplicationProvider {\n");
+                writer.write("  @Override public GeneratedRingloomApplication application() { return new " + appName
+                        + "(); }\n");
                 writer.write("}\n");
             }
         } catch (IOException ex) {
@@ -329,15 +340,16 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         try {
             Filer filer = processingEnv.getFiler();
             FileObject file = filer.createResource(
-                StandardLocation.CLASS_OUTPUT,
-                "",
-                "META-INF/services/io.ringloom.framework.generated.GeneratedRingloomApplicationProvider"
-            );
+                    StandardLocation.CLASS_OUTPUT,
+                    "",
+                    "META-INF/services/io.ringloom.framework.generated.GeneratedRingloomApplicationProvider");
             try (Writer writer = file.openWriter()) {
                 writer.write((pkg.isEmpty() ? providerName : pkg + "." + providerName) + "\n");
             }
         } catch (IOException ex) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "failed to generate service file: " + ex.getMessage());
+            processingEnv
+                    .getMessager()
+                    .printMessage(Diagnostic.Kind.ERROR, "failed to generate service file: " + ex.getMessage());
         }
     }
 
@@ -348,8 +360,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         for (VariableElement parameter : method.getParameters()) {
             String type = parameter.asType().toString();
             if (!type.equals("io.ringloom.service.RingloomMessage")
-                && !type.equals("io.ringloom.framework.dispatch.MessageContext")
-                && !type.equals("java.lang.foreign.MemorySegment")) {
+                    && !type.equals("io.ringloom.framework.dispatch.MessageContext")
+                    && !type.equals("java.lang.foreign.MemorySegment")) {
                 error(method, "unsupported RingLoom handler parameter type " + type);
             }
         }
@@ -357,7 +369,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private boolean isMemorySegmentOnly(ExecutableElement method) {
         return method.getParameters().size() == 1
-            && method.getParameters().getFirst().asType().toString().equals("java.lang.foreign.MemorySegment");
+                && method.getParameters().getFirst().asType().toString().equals("java.lang.foreign.MemorySegment");
     }
 
     private boolean returnsInt(ExecutableElement method) {
@@ -397,6 +409,5 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, message, element);
     }
 
-    private record Handler(TypeElement component, ExecutableElement method, int templateId) {
-    }
+    private record Handler(TypeElement component, ExecutableElement method, int templateId) {}
 }

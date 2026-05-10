@@ -5,6 +5,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Registry of named encoders, decoders, and flyweight decoders available to generated code.
+ */
 public final class SerializerRegistry {
     public static final SerializerRegistry EMPTY = new Builder().build();
 

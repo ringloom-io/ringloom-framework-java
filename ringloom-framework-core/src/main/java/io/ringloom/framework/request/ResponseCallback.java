@@ -4,6 +4,11 @@ package io.ringloom.framework.request;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 
+/**
+ * Callback invoked when a generated request receives a response or terminal outcome.
+ *
+ * @param <T> the response payload type
+ */
 public interface ResponseCallback<T> {
     int onResponse(T response, MessageContext context, Object userContext);
 

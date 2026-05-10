@@ -3,6 +3,9 @@ package io.ringloom.framework.eventloop;
 
 import java.util.concurrent.locks.LockSupport;
 
+/**
+ * Idle strategy that parks the current thread for a fixed duration when no work is available.
+ */
 public final class SleepingIdleStrategy implements IdleStrategy {
     private final long parkNanos;
 
@@ -21,6 +24,5 @@ public final class SleepingIdleStrategy implements IdleStrategy {
     }
 
     @Override
-    public void reset() {
-    }
+    public void reset() {}
 }

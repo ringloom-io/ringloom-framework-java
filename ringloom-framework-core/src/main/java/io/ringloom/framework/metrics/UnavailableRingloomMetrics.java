@@ -3,11 +3,16 @@ package io.ringloom.framework.metrics;
 
 import java.util.List;
 
+/**
+ * {@link RingloomMetrics} implementation used when the native metrics reader ABI is unavailable.
+ */
 public final class UnavailableRingloomMetrics implements RingloomMetrics {
+    /**
+     * Shared singleton instance.
+     */
     public static final UnavailableRingloomMetrics INSTANCE = new UnavailableRingloomMetrics();
 
-    private UnavailableRingloomMetrics() {
-    }
+    private UnavailableRingloomMetrics() {}
 
     @Override
     public MetricSample sample(String name) {

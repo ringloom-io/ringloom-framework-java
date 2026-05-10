@@ -8,5 +8,7 @@ import java.lang.annotation.Target;
 
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
-public @interface RingloomServiceComponent {
-}
+/**
+ * Marks a class as participating in generated RingLoom service wiring.
+ */
+public @interface RingloomServiceComponent {}

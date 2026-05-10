@@ -13,6 +13,9 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Message execution policy that copies payloads and dispatches them onto virtual threads.
+ */
 public final class VirtualThreadExecutionPolicy implements MessageExecutionPolicy {
     private final GeneratedMessageDispatcher dispatcher;
     private final ExecutorService executor;
@@ -33,15 +36,14 @@ public final class VirtualThreadExecutionPolicy implements MessageExecutionPolic
         ingressContext.updateFrom(message);
         byte[] payload = message.payloadSegment().toArray(ValueLayout.JAVA_BYTE);
         CopiedMessage copy = new CopiedMessage(
-            message.correlationId(),
-            message.sourceNodeId(),
-            message.sourceServiceId(),
-            message.targetNodeId(),
-            message.targetServiceId(),
-            message.templateId(),
-            message.flags(),
-            payload
-        );
+                message.correlationId(),
+                message.sourceNodeId(),
+                message.sourceServiceId(),
+                message.targetNodeId(),
+                message.targetServiceId(),
+                message.templateId(),
+                message.flags(),
+                payload);
         try {
             inFlight.acquire();
         } catch (InterruptedException ex) {
@@ -52,15 +54,14 @@ public final class VirtualThreadExecutionPolicy implements MessageExecutionPolic
             try {
                 MessageContext context = new MessageContext();
                 context.updateCopied(
-                    copy.correlationId,
-                    copy.sourceNodeId,
-                    copy.sourceServiceId,
-                    copy.targetNodeId,
-                    copy.targetServiceId,
-                    copy.templateId,
-                    copy.flags,
-                    MemorySegment.ofArray(copy.payload)
-                );
+                        copy.correlationId,
+                        copy.sourceNodeId,
+                        copy.sourceServiceId,
+                        copy.targetNodeId,
+                        copy.targetServiceId,
+                        copy.templateId,
+                        copy.flags,
+                        MemorySegment.ofArray(copy.payload));
                 dispatcher.onContextMessage(context);
             } finally {
                 inFlight.release();
@@ -86,14 +87,12 @@ public final class VirtualThreadExecutionPolicy implements MessageExecutionPolic
     }
 
     private record CopiedMessage(
-        long correlationId,
-        short sourceNodeId,
-        short sourceServiceId,
-        short targetNodeId,
-        short targetServiceId,
-        int templateId,
-        int flags,
-        byte[] payload
-    ) {
-    }
+            long correlationId,
+            short sourceNodeId,
+            short sourceServiceId,
+            short targetNodeId,
+            short targetServiceId,
+            int templateId,
+            int flags,
+            byte[] payload) {}
 }

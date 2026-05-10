@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.yaml;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import io.ringloom.framework.config.MessageExecutionMode;
 import io.ringloom.framework.config.RuntimeMode;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-
-import java.nio.file.Path;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 final class YamlRingloomConfigLoaderTest {
     @TempDir
@@ -18,6 +17,7 @@ final class YamlRingloomConfigLoaderTest {
 
     @Test
     void mapsYamlToCoreConfig() throws Exception {
+        // Given
         Path file = tempDir.resolve("ringloom.yaml");
         Files.writeString(file, """
             ringloom:
@@ -42,17 +42,20 @@ final class YamlRingloomConfigLoaderTest {
                   serializer: sbe
             """);
 
+        // When
         var config = new YamlRingloomConfigLoader().load(file);
 
-        assertEquals("orders", config.service().name());
-        assertEquals(RuntimeMode.SHARED, config.runtime().mode());
-        assertEquals(MessageExecutionMode.VIRTUAL_THREADS, config.runtime().execution().mode());
-        assertEquals(17, config.runtime().execution().virtualThreads().maxInFlight());
-        assertEquals("pricing", config.clients().get("pricing").service());
+        // Then
+        assertThat(config.service().name()).isEqualTo("orders");
+        assertThat(config.runtime().mode()).isEqualTo(RuntimeMode.SHARED);
+        assertThat(config.runtime().execution().mode()).isEqualTo(MessageExecutionMode.VIRTUAL_THREADS);
+        assertThat(config.runtime().execution().virtualThreads().maxInFlight()).isEqualTo(17);
+        assertThat(config.clients().get("pricing").service()).isEqualTo("pricing");
     }
 
     @Test
     void rejectsUnknownKeys() throws Exception {
+        // Given
         Path file = tempDir.resolve("bad.yaml");
         Files.writeString(file, """
             ringloom:
@@ -61,6 +64,9 @@ final class YamlRingloomConfigLoaderTest {
                 surprise: true
             """);
 
-        assertThrows(IllegalArgumentException.class, () -> new YamlRingloomConfigLoader().load(file));
+        // When / Then
+        assertThatThrownBy(() -> new YamlRingloomConfigLoader().load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("unknown key ringloom.service.surprise");
     }
 }

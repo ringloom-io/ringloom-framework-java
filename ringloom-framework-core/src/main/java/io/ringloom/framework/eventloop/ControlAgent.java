@@ -4,6 +4,9 @@ package io.ringloom.framework.eventloop;
 import io.ringloom.service.RingloomService;
 import java.util.Objects;
 
+/**
+ * Agent that polls the native RingLoom control channel.
+ */
 public final class ControlAgent implements Agent {
     private final RingloomService service;
     private final int pollLimit;

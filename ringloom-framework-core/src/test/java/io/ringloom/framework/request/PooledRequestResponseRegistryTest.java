@@ -1,35 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.request;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 
 final class PooledRequestResponseRegistryTest {
     @Test
     void staleCorrelationDoesNotResolveReusedSlot() {
+        // Given
         PooledRequestResponseRegistry registry = new PooledRequestResponseRegistry(1);
         PendingRequest first = registry.acquire();
         long staleCorrelation = first.correlationId();
         first.prepare(staleCorrelation, 7, null, null, 0, null);
-        assertEquals(RingloomHandlerStatus.OK, registry.register(first));
+        assertThat(registry.register(first)).isEqualTo(RingloomHandlerStatus.OK);
 
         registry.cancel(first, RingloomHandlerStatus.REQUEST_TIMEOUT);
 
         PendingRequest second = registry.acquire();
         long currentCorrelation = second.correlationId();
         second.prepare(currentCorrelation, 7, null, null, 0, null);
-        assertEquals(RingloomHandlerStatus.OK, registry.register(second));
+        assertThat(registry.register(second)).isEqualTo(RingloomHandlerStatus.OK);
 
-        assertNotEquals(staleCorrelation, currentCorrelation);
-        assertNull(registry.resolve(staleCorrelation, 7));
+        // When
         PendingRequest resolved = registry.resolve(currentCorrelation, 7);
-        assertSame(second, resolved);
-        assertEquals(currentCorrelation, resolved.correlationId());
+
+        // Then
+        assertThat(staleCorrelation).isNotEqualTo(currentCorrelation);
+        assertThat(registry.resolve(staleCorrelation, 7)).isNull();
+        assertThat(resolved).isSameAs(second);
+        assertThat(resolved.correlationId()).isEqualTo(currentCorrelation);
         registry.complete(resolved, RingloomHandlerStatus.OK);
     }
 }

@@ -7,6 +7,9 @@ import io.ringloom.framework.dispatch.MessageExecutionPolicy;
 import io.ringloom.service.MessageConsumer;
 import java.util.Objects;
 
+/**
+ * Agent that polls inbound messages and forwards them to the configured execution policy.
+ */
 public final class MessageConsumerAgent implements Agent {
     private final MessageConsumer consumer;
     private final MessageExecutionPolicy executionPolicy;
@@ -14,11 +17,7 @@ public final class MessageConsumerAgent implements Agent {
     private final int pollLimit;
 
     public MessageConsumerAgent(
-        MessageConsumer consumer,
-        MessageExecutionPolicy executionPolicy,
-        RingloomRuntime runtime,
-        int pollLimit
-    ) {
+            MessageConsumer consumer, MessageExecutionPolicy executionPolicy, RingloomRuntime runtime, int pollLimit) {
         this.consumer = Objects.requireNonNull(consumer, "consumer");
         this.executionPolicy = Objects.requireNonNull(executionPolicy, "executionPolicy");
         this.context = new MessageContext(runtime);

@@ -6,6 +6,10 @@ import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * {@link RequestResponseRegistry} backed by a fixed pool of reusable {@link PendingRequest}
+ * instances.
+ */
 public final class PooledRequestResponseRegistry implements RequestResponseRegistry {
     private final PendingRequest[] slots;
     private final ArrayDeque<PendingRequest> free;

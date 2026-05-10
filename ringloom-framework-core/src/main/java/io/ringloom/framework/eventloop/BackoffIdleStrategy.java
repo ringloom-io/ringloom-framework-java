@@ -3,6 +3,9 @@ package io.ringloom.framework.eventloop;
 
 import java.util.concurrent.locks.LockSupport;
 
+/**
+ * Idle strategy that progresses from spinning to yielding to parking.
+ */
 public final class BackoffIdleStrategy implements IdleStrategy {
     private final int maxSpins;
     private final int maxYields;

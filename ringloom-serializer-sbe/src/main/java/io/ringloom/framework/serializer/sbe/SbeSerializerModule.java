@@ -4,6 +4,9 @@ package io.ringloom.framework.serializer.sbe;
 import io.ringloom.framework.serialization.SerializerModule;
 import io.ringloom.framework.serialization.SerializerRegistry;
 
+/**
+ * Serializer module placeholder for SBE-based codecs.
+ */
 public final class SbeSerializerModule implements SerializerModule {
     @Override
     public String name() {

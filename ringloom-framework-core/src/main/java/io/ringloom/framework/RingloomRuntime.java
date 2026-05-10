@@ -32,6 +32,10 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 
+/**
+ * Owns the running Java-side RingLoom runtime, including generated clients, event loops, and
+ * request tracking.
+ */
 public final class RingloomRuntime implements AutoCloseable {
     private final RingloomApplicationConfig config;
     private final GeneratedRingloomApplication generatedApplication;
@@ -50,21 +54,33 @@ public final class RingloomRuntime implements AutoCloseable {
     private EventLoop controlLoop;
     private EventLoop messageLoop;
 
+    /**
+     * Creates a runtime for a generated application and configuration.
+     *
+     * @param config the application configuration
+     * @param generatedApplication the generated application metadata
+     * @param serializers the serializer registry available to generated code
+     * @param metrics the metrics facade to expose
+     * @param logger the logger used by runtime components
+     */
     public RingloomRuntime(
-        RingloomApplicationConfig config,
-        GeneratedRingloomApplication generatedApplication,
-        SerializerRegistry serializers,
-        RingloomMetrics metrics,
-        Logger logger
-    ) {
+            RingloomApplicationConfig config,
+            GeneratedRingloomApplication generatedApplication,
+            SerializerRegistry serializers,
+            RingloomMetrics metrics,
+            Logger logger) {
         this.config = Objects.requireNonNull(config, "config");
         this.generatedApplication = Objects.requireNonNull(generatedApplication, "generatedApplication");
         this.serializers = Objects.requireNonNull(serializers, "serializers");
         this.metrics = Objects.requireNonNull(metrics, "metrics");
         this.logger = Objects.requireNonNull(logger, "logger");
-        this.requestRegistry = new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
+        this.requestRegistry =
+                new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
     }
 
+    /**
+     * Starts the native RingLoom service, generated clients, and message execution policy.
+     */
     public void start() {
         if (!started.compareAndSet(false, true)) {
             return;
@@ -84,58 +100,77 @@ public final class RingloomRuntime implements AutoCloseable {
         generatedApplication.onRuntimeStarted(this);
     }
 
+    /**
+     * Polls the native control channel once.
+     *
+     * @return the amount of control work performed
+     */
     public int pollControl() {
         ensureStarted();
         return service.pollControl(config.runtime().control().pollLimit());
     }
 
+    /**
+     * Polls inbound messages once.
+     *
+     * @return the amount of message work performed
+     */
     public int pollMessages() {
         ensureStarted();
-        return consumer.poll(message -> {
-            var context = new io.ringloom.framework.dispatch.MessageContext(this);
-            messageExecutionPolicy.onMessage(message, context);
-        }, config.runtime().messages().pollLimit());
+        return consumer.poll(
+                message -> {
+                    var context = new io.ringloom.framework.dispatch.MessageContext(this);
+                    messageExecutionPolicy.onMessage(message, context);
+                },
+                config.runtime().messages().pollLimit());
     }
 
+    /**
+     * Starts the configured event loops using the supplied thread factory.
+     *
+     * @param threadFactory the thread factory used to create event-loop threads
+     */
     public void startEventLoops(ThreadFactory threadFactory) {
         ensureStarted();
         RuntimeMode mode = config.runtime().mode();
         if (mode == RuntimeMode.EXTERNAL) {
             return;
         }
-        ControlAgent controlAgent = new ControlAgent(service, config.runtime().control().pollLimit());
+        ControlAgent controlAgent =
+                new ControlAgent(service, config.runtime().control().pollLimit());
         MessageConsumerAgent messageAgent = new MessageConsumerAgent(
-            consumer,
-            messageExecutionPolicy,
-            this,
-            config.runtime().messages().pollLimit()
-        );
+                consumer,
+                messageExecutionPolicy,
+                this,
+                config.runtime().messages().pollLimit());
         if (mode == RuntimeMode.SHARED) {
             messageLoop = new EventLoop(
-                "ringloom-shared",
-                new CompositeAgent("ringloom-shared", controlAgent, messageAgent),
-                IdleStrategies.create(config.runtime().messages().idleStrategy()),
-                logger
-            );
+                    "ringloom-shared",
+                    new CompositeAgent("ringloom-shared", controlAgent, messageAgent),
+                    IdleStrategies.create(config.runtime().messages().idleStrategy()),
+                    logger);
             messageLoop.startThread(threadFactory);
             return;
         }
         controlLoop = new EventLoop(
-            "ringloom-control",
-            controlAgent,
-            IdleStrategies.create(config.runtime().control().idleStrategy()),
-            logger
-        );
+                "ringloom-control",
+                controlAgent,
+                IdleStrategies.create(config.runtime().control().idleStrategy()),
+                logger);
         messageLoop = new EventLoop(
-            "ringloom-messages",
-            messageAgent,
-            IdleStrategies.create(config.runtime().messages().idleStrategy()),
-            logger
-        );
+                "ringloom-messages",
+                messageAgent,
+                IdleStrategies.create(config.runtime().messages().idleStrategy()),
+                logger);
         controlLoop.startThread(threadFactory);
         messageLoop.startThread(threadFactory);
     }
 
+    /**
+     * Blocks until the runtime has fully shut down.
+     *
+     * @throws InterruptedException if the waiting thread is interrupted
+     */
     public void awaitShutdown() throws InterruptedException {
         synchronized (shutdownMonitor) {
             while (!closed.get()) {
@@ -144,6 +179,12 @@ public final class RingloomRuntime implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns the low-level client for a generated target service.
+     *
+     * @param targetServiceName the target service name
+     * @return the low-level client
+     */
     public RingloomClient lowLevelClient(String targetServiceName) {
         ensureStarted();
         RingloomClient client = lowLevelClients.get(targetServiceName);
@@ -153,6 +194,13 @@ public final class RingloomRuntime implements AutoCloseable {
         return client;
     }
 
+    /**
+     * Returns a generated client implementation by its public interface type.
+     *
+     * @param clientType the generated client interface type
+     * @param <T> the generated client type
+     * @return the generated client implementation
+     */
     @SuppressWarnings("unchecked")
     public <T> T generatedClient(Class<T> clientType) {
         ensureStarted();
@@ -163,19 +211,37 @@ public final class RingloomRuntime implements AutoCloseable {
         return (T) client;
     }
 
+    /**
+     * Returns the active inbound message execution policy.
+     *
+     * @return the message execution policy
+     */
     public MessageExecutionPolicy messageExecutionPolicy() {
         ensureStarted();
         return messageExecutionPolicy;
     }
 
+    /**
+     * Returns the request/response registry used by generated client code.
+     *
+     * @return the request/response registry
+     */
     public RequestResponseRegistry requestResponseRegistry() {
         return requestRegistry;
     }
 
+    /**
+     * Returns the runtime metrics facade.
+     *
+     * @return the metrics facade
+     */
     public RingloomMetrics metrics() {
         return metrics;
     }
 
+    /**
+     * Stops the runtime and releases native resources.
+     */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
@@ -206,18 +272,19 @@ public final class RingloomRuntime implements AutoCloseable {
     private MessageExecutionPolicy createMessageExecutionPolicy() {
         MessageExecutionMode mode = config.runtime().execution().mode();
         return switch (mode) {
-            case CONSUMER_THREAD -> new ConsumerThreadExecutionPolicy(generatedApplication.dispatcher(), requestRegistry);
-            case PARTITIONED_WORKERS -> new PartitionedWorkerExecutionPolicy(
-                generatedApplication.dispatcher(),
-                partitionExtractor(),
-                config.runtime().execution().partitioned(),
-                Thread.ofPlatform().name("ringloom-worker-", 0).factory(),
-                IdleStrategies.create(config.runtime().messages().idleStrategy())
-            );
-            case VIRTUAL_THREADS -> new VirtualThreadExecutionPolicy(
-                generatedApplication.dispatcher(),
-                config.runtime().execution().virtualThreads()
-            );
+            case CONSUMER_THREAD ->
+                new ConsumerThreadExecutionPolicy(generatedApplication.dispatcher(), requestRegistry);
+            case PARTITIONED_WORKERS ->
+                new PartitionedWorkerExecutionPolicy(
+                        generatedApplication.dispatcher(),
+                        partitionExtractor(),
+                        config.runtime().execution().partitioned(),
+                        Thread.ofPlatform().name("ringloom-worker-", 0).factory(),
+                        IdleStrategies.create(config.runtime().messages().idleStrategy()));
+            case VIRTUAL_THREADS ->
+                new VirtualThreadExecutionPolicy(
+                        generatedApplication.dispatcher(),
+                        config.runtime().execution().virtualThreads());
         };
     }
 
