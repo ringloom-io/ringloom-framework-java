@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: Apache-2.0
+package io.ringloom.framework;
+
+import io.ringloom.framework.config.MessageExecutionMode;
+import io.ringloom.framework.config.RingloomApplicationConfig;
+import io.ringloom.framework.config.RuntimeMode;
+import io.ringloom.framework.dispatch.ConsumerThreadExecutionPolicy;
+import io.ringloom.framework.dispatch.MessageExecutionPolicy;
+import io.ringloom.framework.dispatch.PartitionKeyExtractor;
+import io.ringloom.framework.dispatch.PartitionedWorkerExecutionPolicy;
+import io.ringloom.framework.dispatch.VirtualThreadExecutionPolicy;
+import io.ringloom.framework.eventloop.CompositeAgent;
+import io.ringloom.framework.eventloop.ControlAgent;
+import io.ringloom.framework.eventloop.EventLoop;
+import io.ringloom.framework.eventloop.IdleStrategies;
+import io.ringloom.framework.eventloop.MessageConsumerAgent;
+import io.ringloom.framework.generated.GeneratedClientBinding;
+import io.ringloom.framework.generated.GeneratedPartitionKeyExtractor;
+import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.metrics.RingloomMetrics;
+import io.ringloom.framework.request.PooledRequestResponseRegistry;
+import io.ringloom.framework.request.RequestResponseRegistry;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.service.MessageConsumer;
+import io.ringloom.service.RingloomClient;
+import io.ringloom.service.RingloomService;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+
+public final class RingloomRuntime implements AutoCloseable {
+    private final RingloomApplicationConfig config;
+    private final GeneratedRingloomApplication generatedApplication;
+    private final SerializerRegistry serializers;
+    private final RingloomMetrics metrics;
+    private final Logger logger;
+    private final RequestResponseRegistry requestRegistry;
+    private final Map<String, RingloomClient> lowLevelClients = new HashMap<>();
+    private final Map<Class<?>, Object> generatedClients = new HashMap<>();
+    private final Object shutdownMonitor = new Object();
+    private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private RingloomService service;
+    private MessageConsumer consumer;
+    private MessageExecutionPolicy messageExecutionPolicy;
+    private EventLoop controlLoop;
+    private EventLoop messageLoop;
+
+    public RingloomRuntime(
+        RingloomApplicationConfig config,
+        GeneratedRingloomApplication generatedApplication,
+        SerializerRegistry serializers,
+        RingloomMetrics metrics,
+        Logger logger
+    ) {
+        this.config = Objects.requireNonNull(config, "config");
+        this.generatedApplication = Objects.requireNonNull(generatedApplication, "generatedApplication");
+        this.serializers = Objects.requireNonNull(serializers, "serializers");
+        this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.logger = Objects.requireNonNull(logger, "logger");
+        this.requestRegistry = new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
+    }
+
+    public void start() {
+        if (!started.compareAndSet(false, true)) {
+            return;
+        }
+        if (generatedApplication.requiresCorrelationAwareSends()) {
+            throw new IllegalStateException("generated application requires correlation-aware native send ABI");
+        }
+        service = RingloomService.start(config.service().toLowLevelConfig());
+        consumer = service.messageConsumer();
+        for (GeneratedClientBinding<?> binding : generatedApplication.clients()) {
+            RingloomClient lowLevel = service.createClient(binding.targetServiceName());
+            lowLevelClients.put(binding.targetServiceName(), lowLevel);
+            Object generatedClient = binding.create(this, lowLevel, serializers);
+            generatedClients.put(binding.clientType(), generatedClient);
+        }
+        messageExecutionPolicy = createMessageExecutionPolicy();
+        generatedApplication.onRuntimeStarted(this);
+    }
+
+    public int pollControl() {
+        ensureStarted();
+        return service.pollControl(config.runtime().control().pollLimit());
+    }
+
+    public int pollMessages() {
+        ensureStarted();
+        return consumer.poll(message -> {
+            var context = new io.ringloom.framework.dispatch.MessageContext(this);
+            messageExecutionPolicy.onMessage(message, context);
+        }, config.runtime().messages().pollLimit());
+    }
+
+    public void startEventLoops(ThreadFactory threadFactory) {
+        ensureStarted();
+        RuntimeMode mode = config.runtime().mode();
+        if (mode == RuntimeMode.EXTERNAL) {
+            return;
+        }
+        ControlAgent controlAgent = new ControlAgent(service, config.runtime().control().pollLimit());
+        MessageConsumerAgent messageAgent = new MessageConsumerAgent(
+            consumer,
+            messageExecutionPolicy,
+            this,
+            config.runtime().messages().pollLimit()
+        );
+        if (mode == RuntimeMode.SHARED) {
+            messageLoop = new EventLoop(
+                "ringloom-shared",
+                new CompositeAgent("ringloom-shared", controlAgent, messageAgent),
+                IdleStrategies.create(config.runtime().messages().idleStrategy()),
+                logger
+            );
+            messageLoop.startThread(threadFactory);
+            return;
+        }
+        controlLoop = new EventLoop(
+            "ringloom-control",
+            controlAgent,
+            IdleStrategies.create(config.runtime().control().idleStrategy()),
+            logger
+        );
+        messageLoop = new EventLoop(
+            "ringloom-messages",
+            messageAgent,
+            IdleStrategies.create(config.runtime().messages().idleStrategy()),
+            logger
+        );
+        controlLoop.startThread(threadFactory);
+        messageLoop.startThread(threadFactory);
+    }
+
+    public void awaitShutdown() throws InterruptedException {
+        synchronized (shutdownMonitor) {
+            while (!closed.get()) {
+                shutdownMonitor.wait();
+            }
+        }
+    }
+
+    public RingloomClient lowLevelClient(String targetServiceName) {
+        ensureStarted();
+        RingloomClient client = lowLevelClients.get(targetServiceName);
+        if (client == null) {
+            throw new IllegalArgumentException("unknown target service " + targetServiceName);
+        }
+        return client;
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> T generatedClient(Class<T> clientType) {
+        ensureStarted();
+        Object client = generatedClients.get(clientType);
+        if (client == null) {
+            throw new IllegalArgumentException("unknown generated client " + clientType.getName());
+        }
+        return (T) client;
+    }
+
+    public MessageExecutionPolicy messageExecutionPolicy() {
+        ensureStarted();
+        return messageExecutionPolicy;
+    }
+
+    public RequestResponseRegistry requestResponseRegistry() {
+        return requestRegistry;
+    }
+
+    public RingloomMetrics metrics() {
+        return metrics;
+    }
+
+    @Override
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            if (started.get()) {
+                generatedApplication.onRuntimeStopping(this);
+            }
+            closeQuietly(messageLoop, "message event loop");
+            closeQuietly(controlLoop, "control event loop");
+            closeQuietly(messageExecutionPolicy, "message execution policy");
+            requestRegistry.completeAll(RingloomHandlerStatus.SHUTDOWN);
+            closeQuietly(consumer, "message consumer");
+            for (RingloomClient client : lowLevelClients.values()) {
+                closeQuietly(client, "client");
+            }
+            lowLevelClients.clear();
+            generatedClients.clear();
+            closeQuietly(service, "service");
+        } finally {
+            synchronized (shutdownMonitor) {
+                shutdownMonitor.notifyAll();
+            }
+        }
+    }
+
+    private MessageExecutionPolicy createMessageExecutionPolicy() {
+        MessageExecutionMode mode = config.runtime().execution().mode();
+        return switch (mode) {
+            case CONSUMER_THREAD -> new ConsumerThreadExecutionPolicy(generatedApplication.dispatcher(), requestRegistry);
+            case PARTITIONED_WORKERS -> new PartitionedWorkerExecutionPolicy(
+                generatedApplication.dispatcher(),
+                partitionExtractor(),
+                config.runtime().execution().partitioned(),
+                Thread.ofPlatform().name("ringloom-worker-", 0).factory(),
+                IdleStrategies.create(config.runtime().messages().idleStrategy())
+            );
+            case VIRTUAL_THREADS -> new VirtualThreadExecutionPolicy(
+                generatedApplication.dispatcher(),
+                config.runtime().execution().virtualThreads()
+            );
+        };
+    }
+
+    private PartitionKeyExtractor partitionExtractor() {
+        Map<Integer, GeneratedPartitionKeyExtractor> extractors = generatedApplication.partitionKeyExtractors();
+        if (extractors.isEmpty()) {
+            throw new IllegalStateException("partitioned execution requires generated partition-key extractors");
+        }
+        return (message, context) -> {
+            GeneratedPartitionKeyExtractor extractor = extractors.get(message.templateId());
+            if (extractor == null) {
+                throw new IllegalStateException("missing partition-key extractor for template " + message.templateId());
+            }
+            return extractor.partitionKey(message, context);
+        };
+    }
+
+    private void ensureStarted() {
+        if (!started.get() || closed.get()) {
+            throw new IllegalStateException("RingloomRuntime is not running");
+        }
+    }
+
+    private void closeQuietly(AutoCloseable closeable, String resourceName) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ex) {
+            logger.warn("failed to close RingLoom {}", resourceName, ex);
+        }
+    }
+}
