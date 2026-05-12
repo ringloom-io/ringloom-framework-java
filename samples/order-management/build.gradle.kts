@@ -84,6 +84,7 @@ applications.forEach { (taskName, app) ->
         description = "Run $mainClassName"
         classpath = sourceSets.named(sourceSetName).get().runtimeClasspath
         mainClass.set(mainClassName)
+        workingDir = rootProject.projectDir
         dependsOn(tasks.named("${sourceSetName}Classes"))
         jvmArgs(
             "--enable-native-access=ALL-UNNAMED",
