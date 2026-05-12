@@ -32,6 +32,13 @@ public interface GeneratedRingloomApplication {
     GeneratedMessageDispatcher dispatcher();
 
     /**
+     * Registers generated serializers into the supplied builder before runtime startup.
+     *
+     * @param builder the serializer registry builder to contribute to
+     */
+    default void registerSerializers(SerializerRegistry.Builder builder) {}
+
+    /**
      * Supplies the runtime serializer registry to generated dispatchers that decode inbound payloads.
      *
      * @param serializers the runtime serializer registry

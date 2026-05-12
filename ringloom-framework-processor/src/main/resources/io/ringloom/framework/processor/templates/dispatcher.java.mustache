@@ -3,15 +3,15 @@
 {{/packageName}}import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.serialization.DecodeContext;
+import io.ringloom.framework.serialization.FlyweightDecoder;
 import io.ringloom.framework.serialization.MessageDecoder;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import io.ringloom.service.RingloomMessage;
-import java.lang.foreign.MemorySegment;
 
 public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
   private SerializerRegistry serializers = SerializerRegistry.EMPTY;
-  private final DecodeContext decodeContext = new DecodeContext();
+  private final ThreadLocal<DecodeContext> decodeContexts = ThreadLocal.withInitial(DecodeContext::new);
 {{#handlerFields}}
   private final {{{componentType}}} {{fieldName}} = new {{{componentType}}}();
 {{/handlerFields}}

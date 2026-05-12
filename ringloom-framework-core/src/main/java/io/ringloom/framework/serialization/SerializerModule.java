@@ -5,7 +5,5 @@ package io.ringloom.framework.serialization;
  * Module that registers one or more serializers with a {@link SerializerRegistry.Builder}.
  */
 public interface SerializerModule {
-    String name();
-
     void register(SerializerRegistry.Builder builder);
 }

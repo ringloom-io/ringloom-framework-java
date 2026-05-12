@@ -125,7 +125,7 @@ A service can be bootstrapped from YAML:
 ```java
 public final class OrdersMain {
     public static void main(String[] args) throws Exception {
-        try (RingloomApplication app = RingloomBootstrap.fromYaml(args[0]).start()) {
+        try (RingloomApplicationRunner app = RingloomBootstrap.fromYaml(args[0]).start()) {
             app.awaitShutdown();
         }
     }

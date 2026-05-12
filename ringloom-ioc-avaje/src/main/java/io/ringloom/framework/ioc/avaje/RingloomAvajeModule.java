@@ -3,7 +3,7 @@ package io.ringloom.framework.ioc.avaje;
 
 import io.avaje.inject.spi.AvajeModule;
 import io.avaje.inject.spi.Builder;
-import io.ringloom.framework.RingloomApplication;
+import io.ringloom.framework.RingloomApplicationRunner;
 import io.ringloom.framework.RingloomBootstrap;
 import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomApplicationConfig;
@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
  * dispatcher, request registry, and generated clients as Avaje beans.
  */
 public final class RingloomAvajeModule implements AvajeModule.Custom {
+
     private final RingloomAvajeConfig moduleConfig;
     private final RingloomApplicationConfig suppliedConfig;
     private final GeneratedRingloomApplication suppliedGeneratedApplication;
@@ -93,11 +94,11 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             SerializerRegistry.class,
             GeneratedRingloomApplication.class,
             RingloomRuntime.class,
-            RingloomApplication.class,
+            RingloomApplicationRunner.class,
             RingloomMetrics.class,
             MessageExecutionPolicy.class,
             RequestResponseRegistry.class,
-            GeneratedMessageDispatcher.class
+            GeneratedMessageDispatcher.class,
         };
     }
 
@@ -114,7 +115,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         registerAbsent(builder, GeneratedRingloomApplication.class, generatedApplication);
         registerAbsent(builder, GeneratedMessageDispatcher.class, generatedApplication.dispatcher());
 
-        SerializerRegistry serializers = resolveSerializers(builder);
+        SerializerRegistry serializers = resolveSerializers(builder, generatedApplication);
         registerAbsent(builder, SerializerRegistry.class, serializers);
 
         RingloomMetrics metrics = resolveMetrics(builder);
@@ -131,8 +132,9 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         }
         registerAbsent(builder, RingloomRuntime.class, runtime);
 
-        RingloomApplication application = new RingloomApplication(runtime);
-        registerAbsent(builder, RingloomApplication.class, application);
+        RingloomApplicationRunner application = new RingloomApplicationRunner(
+                runtime, config.runtime().shutdownHook(), generatedApplication.serviceName());
+        registerAbsent(builder, RingloomApplicationRunner.class, application);
         builder.addPreDestroy(application);
 
         registerAbsent(builder, RequestResponseRegistry.class, runtime.requestResponseRegistry());
@@ -145,11 +147,11 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
     }
 
     /**
-     * Starts a RingLoom application using the explicit constructor dependencies.
+     * Starts a RingLoom application runner using the explicit constructor dependencies.
      *
-     * @return the running RingLoom application
+     * @return the running RingLoom application runner
      */
-    public RingloomApplication start() {
+    public RingloomApplicationRunner start() {
         if (suppliedConfig == null || suppliedGeneratedApplication == null || suppliedSerializers == null) {
             throw new IllegalStateException(
                     "manual start requires explicit config, generated application, and serializers");
@@ -208,15 +210,18 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
                 : suppliedGeneratedApplication;
     }
 
-    private SerializerRegistry resolveSerializers(Builder builder) {
+    private SerializerRegistry resolveSerializers(Builder builder, GeneratedRingloomApplication generatedApplication) {
+        SerializerRegistry.Builder registryBuilder = SerializerRegistry.builder();
+        generatedApplication.registerSerializers(registryBuilder);
         if (suppliedSerializers != null) {
-            return suppliedSerializers;
+            suppliedSerializers.registerInto(registryBuilder);
+            return registryBuilder.build();
         }
         Optional<SerializerRegistry> registry = builder.getOptional(SerializerRegistry.class);
         if (registry.isPresent()) {
-            return registry.get();
+            registry.get().registerInto(registryBuilder);
+            return registryBuilder.build();
         }
-        SerializerRegistry.Builder registryBuilder = SerializerRegistry.builder();
         for (SerializerModule module : builder.list(SerializerModule.class)) {
             registryBuilder.module(module);
         }

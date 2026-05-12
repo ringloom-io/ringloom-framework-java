@@ -91,13 +91,13 @@ public void close();
 `close()` must be idempotent and must stop event loops before closing clients,
 consumer, and service handles.
 
-### `RingloomApplication`
+### `RingloomApplicationRunner`
 
-`RingloomApplication` is the standalone lifecycle wrapper returned by bootstrap
+`RingloomApplicationRunner` is the standalone lifecycle wrapper returned by bootstrap
 APIs.
 
 ```java
-public final class RingloomApplication implements AutoCloseable {
+public final class RingloomApplicationRunner implements AutoCloseable {
     public RingloomRuntime runtime();
     public void awaitShutdown() throws InterruptedException;
     public void close();

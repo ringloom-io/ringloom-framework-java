@@ -37,6 +37,7 @@ import org.slf4j.Logger;
  * request tracking.
  */
 public final class RingloomRuntime implements AutoCloseable {
+
     private final RingloomApplicationConfig config;
     private final GeneratedRingloomApplication generatedApplication;
     private final SerializerRegistry serializers;
@@ -220,6 +221,20 @@ public final class RingloomRuntime implements AutoCloseable {
     public MessageExecutionPolicy messageExecutionPolicy() {
         ensureStarted();
         return messageExecutionPolicy;
+    }
+
+    /**
+     * Resolves a serializer name, falling back to the configured default serializer when the
+     * generated API leaves the name blank.
+     *
+     * @param serializerName the generated serializer name override, possibly blank
+     * @return the resolved serializer name, possibly blank when no default is configured
+     */
+    public String resolveSerializerName(String serializerName) {
+        if (serializerName == null || serializerName.isBlank()) {
+            return config.serializers().defaultSerializer();
+        }
+        return serializerName;
     }
 
     /**

@@ -107,7 +107,7 @@ public final class RingloomBootstrap {
 
     public RingloomBootstrap generatedApplication(GeneratedRingloomApplication generated);
     public RingloomBootstrap serializerRegistry(SerializerRegistry serializers);
-    public RingloomApplication start();
+    public RingloomApplicationRunner start();
 }
 ```
 
@@ -165,12 +165,13 @@ example `ringloom.runtime.messages.pollLimit`.
 
 When `shutdownHook` is true:
 
-1. Register one hook per `RingloomApplication`.
+1. Register one hook per `RingloomApplicationRunner`.
 2. Hook calls `close()` idempotently.
 3. Hook does not block indefinitely; configurable timeout can be added later.
 
-`awaitShutdown()` should wait on runtime state and react to interrupts by
-restoring interrupt status.
+`awaitShutdown()` should continue to wait on runtime state and react to interrupts by
+restoring interrupt status. `RingloomApplicationRunner.awaitShutdown()` should provide the
+standalone-service waiting API when the runtime shutdown hook is enabled.
 
 ## Testing
 

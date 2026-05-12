@@ -1,8 +1,9 @@
 
   @Override
   public int {{methodName}}({{{payloadType}}} {{payloadName}}) {
+    String serializerName = runtime.resolveSerializerName("{{serializer}}");
     MessageEncoder<{{{payloadType}}}> encoder =
-        serializers.encoder("{{serializer}}", {{{payloadType}}}.class);
+        serializers.encoder(serializerName, {{{payloadType}}}.class);
     if (encoder == null) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }

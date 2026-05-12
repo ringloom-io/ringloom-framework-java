@@ -31,7 +31,7 @@ The SBE module should expose:
 
 ```java
 public final class SbeSerializerModule implements SerializerModule {
-    public String name();
+    public void register(SerializerRegistry.Builder builder);
     public void register(SerializerRegistry.Builder builder, SbeConfig config);
 }
 ```

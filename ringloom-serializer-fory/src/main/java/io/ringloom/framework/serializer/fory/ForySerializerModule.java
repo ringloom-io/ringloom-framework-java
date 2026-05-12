@@ -13,10 +13,8 @@ import org.apache.fory.config.Language;
  * Serializer module for Apache Fory integrations.
  */
 public final class ForySerializerModule implements SerializerModule {
-    @Override
-    public String name() {
-        return "fory";
-    }
+
+    private static final String SERIALIZER_NAME = "fory";
 
     @Override
     public void register(SerializerRegistry.Builder builder) {
@@ -33,7 +31,7 @@ public final class ForySerializerModule implements SerializerModule {
         Objects.requireNonNull(builder, "builder");
         ForyMessageCodec<Object> codec =
                 new ForyMessageCodec<>(createFory(config), Object.class, config.maxPayloadBytes());
-        builder.encoder(name(), codec).decoder(name(), codec);
+        builder.encoder(SERIALIZER_NAME, Object.class, codec).decoder(SERIALIZER_NAME, Object.class, codec);
     }
 
     /**

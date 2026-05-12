@@ -108,12 +108,12 @@ Start a standalone service from YAML when `ringloom-framework-yaml` is on the
 classpath:
 
 ```java
-import io.ringloom.framework.RingloomApplication;
+import io.ringloom.framework.RingloomApplicationRunner;
 import io.ringloom.framework.RingloomBootstrap;
 
 public final class OrdersMain {
     public static void main(String[] args) throws Exception {
-        try (RingloomApplication app = RingloomBootstrap.fromYaml(args[0]).start()) {
+        try (RingloomApplicationRunner app = RingloomBootstrap.fromYaml(args[0]).start()) {
             app.awaitShutdown();
         }
     }

@@ -1,0 +1,112 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="io.ringloom.samples.orders.sbe"
+                   id="4101"
+                   version="1"
+                   semanticVersion="1.0.0"
+                   description="RingLoom framework order management sample"
+                   headerType="messageHeader"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader" description="SBE message header">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding" description="Repeating group dimensions">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <enum name="Symbol" encodingType="uint16">
+            <validValue name="AAPL">1</validValue>
+            <validValue name="MSFT">2</validValue>
+            <validValue name="NVDA">3</validValue>
+            <validValue name="JAVA">4</validValue>
+        </enum>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="BUY">1</validValue>
+            <validValue name="SELL">2</validValue>
+        </enum>
+        <enum name="TimeInForce" encodingType="uint8">
+            <validValue name="DAY">1</validValue>
+        </enum>
+        <enum name="RejectReason" encodingType="uint16">
+            <validValue name="UNKNOWN_SYMBOL">1</validValue>
+            <validValue name="ZERO_QUANTITY">2</validValue>
+            <validValue name="BAD_PRICE">3</validValue>
+            <validValue name="RISK_CREDIT">7</validValue>
+            <validValue name="RISK_SYMBOL_LIMIT">8</validValue>
+            <validValue name="SYSTEM_BUSY">9</validValue>
+        </enum>
+        <enum name="Stage" encodingType="uint8">
+            <validValue name="GATEWAY">2</validValue>
+            <validValue name="RISK">3</validValue>
+            <validValue name="MATCHING">4</validValue>
+        </enum>
+        <enum name="ExecutionStatus" encodingType="uint8">
+            <validValue name="FILLED">1</validValue>
+        </enum>
+    </types>
+
+    <sbe:message name="NewOrder" id="1001" description="Outbound order from simulator" blockLength="32">
+        <field name="accountId" id="1" type="uint32"/>
+        <field name="orderId" id="2" type="uint64"/>
+        <field name="symbol" id="3" type="Symbol"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="timeInForce" id="5" type="TimeInForce"/>
+        <field name="quantity" id="6" type="uint32"/>
+        <field name="priceNanos" id="7" type="int64"/>
+    </sbe:message>
+
+    <sbe:message name="RiskCheckRequest" id="1101" description="Validated order sent to risk" blockLength="40">
+        <field name="gatewaySequence" id="1" type="uint64"/>
+        <field name="accountId" id="2" type="uint32"/>
+        <field name="orderId" id="3" type="uint64"/>
+        <field name="symbol" id="4" type="Symbol"/>
+        <field name="side" id="5" type="Side"/>
+        <field name="timeInForce" id="6" type="TimeInForce"/>
+        <field name="quantity" id="7" type="uint32"/>
+        <field name="priceNanos" id="8" type="int64"/>
+    </sbe:message>
+
+    <sbe:message name="RiskAccepted" id="1102" description="Risk accepted order" blockLength="48">
+        <field name="gatewaySequence" id="1" type="uint64"/>
+        <field name="acceptedNotionalNanos" id="2" type="int64"/>
+        <field name="accountId" id="3" type="uint32"/>
+        <field name="orderId" id="4" type="uint64"/>
+        <field name="symbol" id="5" type="Symbol"/>
+        <field name="side" id="6" type="Side"/>
+        <field name="timeInForce" id="7" type="TimeInForce"/>
+        <field name="quantity" id="8" type="uint32"/>
+        <field name="priceNanos" id="9" type="int64"/>
+    </sbe:message>
+
+    <sbe:message name="OrderRejected" id="1103" description="Rejected order" blockLength="24">
+        <field name="accountId" id="1" type="uint32"/>
+        <field name="orderId" id="2" type="uint64"/>
+        <field name="symbol" id="3" type="Symbol"/>
+        <field name="reason" id="4" type="RejectReason"/>
+        <field name="stage" id="5" type="Stage"/>
+    </sbe:message>
+
+    <sbe:message name="Fill" id="1201" description="Matched fill" blockLength="40">
+        <field name="accountId" id="1" type="uint32"/>
+        <field name="orderId" id="2" type="uint64"/>
+        <field name="symbol" id="3" type="Symbol"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="quantity" id="5" type="uint32"/>
+        <field name="priceNanos" id="6" type="int64"/>
+        <field name="gatewaySequence" id="7" type="uint64"/>
+    </sbe:message>
+
+    <sbe:message name="ExecutionReport" id="1301" description="Post-trade execution report" blockLength="32">
+        <field name="accountId" id="1" type="uint32"/>
+        <field name="orderId" id="2" type="uint64"/>
+        <field name="symbol" id="3" type="Symbol"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="status" id="5" type="ExecutionStatus"/>
+        <field name="quantity" id="6" type="uint32"/>
+        <field name="priceNanos" id="7" type="int64"/>
+    </sbe:message>
+</sbe:messageSchema>

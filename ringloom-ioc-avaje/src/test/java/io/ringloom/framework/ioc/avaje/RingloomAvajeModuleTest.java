@@ -11,7 +11,7 @@ import static org.mockito.Mockito.when;
 
 import io.avaje.inject.BeanScope;
 import io.avaje.inject.spi.Builder;
-import io.ringloom.framework.RingloomApplication;
+import io.ringloom.framework.RingloomApplicationRunner;
 import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomApplicationConfig;
 import io.ringloom.framework.dispatch.MessageContext;
@@ -31,6 +31,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 final class RingloomAvajeModuleTest {
+
     @Test
     void lazyBeanScopeRegistersCoreRingloomBeansWithoutNativeStartup() {
         // Given
@@ -44,16 +45,16 @@ final class RingloomAvajeModuleTest {
                 .bean(GeneratedRingloomApplication.class, generated)
                 .modules(new RingloomAvajeModule())
                 .build()) {
-
             // Then
             assertThat(scope.get(RingloomAvajeConfig.class)).isEqualTo(RingloomAvajeConfig.lazy());
             assertThat(scope.get(RingloomApplicationConfig.class)).isSameAs(config);
             assertThat(scope.get(GeneratedRingloomApplication.class)).isSameAs(generated);
             assertThat(scope.get(GeneratedMessageDispatcher.class)).isSameAs(generated.dispatcher());
-            assertThat(scope.get(SerializerRegistry.class).contains("missing")).isFalse();
+            assertThat(scope.get(SerializerRegistry.class).encoder("missing", String.class))
+                    .isNull();
             assertThat(scope.get(RingloomMetrics.class)).isSameAs(UnavailableRingloomMetrics.INSTANCE);
             assertThat(scope.get(RingloomRuntime.class))
-                    .isSameAs(scope.get(RingloomApplication.class).runtime());
+                    .isSameAs(scope.get(RingloomApplicationRunner.class).runtime());
             assertThat(scope.get(RequestResponseRegistry.class))
                     .isSameAs(scope.get(RingloomRuntime.class).requestResponseRegistry());
         }
@@ -67,13 +68,8 @@ final class RingloomAvajeModuleTest {
         MessageEncoder<String> encoder = new TestEncoder();
         SerializerModule module = new SerializerModule() {
             @Override
-            public String name() {
-                return "text";
-            }
-
-            @Override
             public void register(SerializerRegistry.Builder builder) {
-                builder.encoder(name(), encoder);
+                builder.encoder("text", String.class, encoder);
             }
         };
 
@@ -85,10 +81,8 @@ final class RingloomAvajeModuleTest {
                 .bean(SerializerModule.class, module)
                 .modules(new RingloomAvajeModule())
                 .build()) {
-
             // Then
             SerializerRegistry registry = scope.get(SerializerRegistry.class);
-            assertThat(registry.contains("text")).isTrue();
             assertThat(registry.encoder("text", String.class)).isSameAs(encoder);
         }
     }
@@ -188,6 +182,7 @@ final class RingloomAvajeModuleTest {
     private interface TestClient {}
 
     private static final class TestEncoder implements MessageEncoder<String> {
+
         @Override
         public int templateId() {
             return 1;

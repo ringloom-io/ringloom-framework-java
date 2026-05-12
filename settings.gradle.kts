@@ -21,4 +21,5 @@ include(
     "ringloom-serializer-sbe",
     "ringloom-serializer-fory",
     "ringloom-ioc-avaje",
+    "samples:order-management",
 )

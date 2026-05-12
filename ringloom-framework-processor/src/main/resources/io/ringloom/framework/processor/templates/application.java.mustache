@@ -22,6 +22,10 @@ public final class {{appName}} implements GeneratedRingloomApplication {
   }
 
   @Override
+  public void registerSerializers(SerializerRegistry.Builder builder) {
+{{{serializerRegistrationSources}}}  }
+
+  @Override
   public void initializeSerializers(SerializerRegistry serializers) {
     dispatcher.initializeSerializers(serializers);
   }

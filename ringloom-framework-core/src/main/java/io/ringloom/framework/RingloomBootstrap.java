@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
  * Bootstraps a RingLoom application from configuration and generated metadata.
  */
 public final class RingloomBootstrap {
+
     private final RingloomApplicationConfig config;
     private GeneratedRingloomApplication generatedApplication;
     private SerializerRegistry serializers = SerializerRegistry.EMPTY;
@@ -119,20 +120,29 @@ public final class RingloomBootstrap {
     /**
      * Starts the native service, generated clients, and Java event loops.
      *
-     * @return a running application handle
+     * @return a running application runner
      */
-    public RingloomApplication start() {
+    public RingloomApplicationRunner start() {
         GeneratedRingloomApplication generated = generatedApplication == null
                 ? discoverGeneratedApplication(config.service().name())
                 : generatedApplication;
         if (!generated.serviceName().equals(config.service().name())) {
             throw new IllegalArgumentException("generated service " + generated.serviceName()
-                    + " does not match config service " + config.service().name());
+                    + " does not match config service "
+                    + config.service().name());
         }
-        RingloomRuntime runtime = new RingloomRuntime(config, generated, serializers, metrics, logger);
+        SerializerRegistry resolvedSerializers = resolveSerializers(generated);
+        RingloomRuntime runtime = new RingloomRuntime(config, generated, resolvedSerializers, metrics, logger);
         runtime.start();
         runtime.startEventLoops(Thread.ofPlatform().name("ringloom-java-", 0).factory());
-        return new RingloomApplication(runtime);
+        return new RingloomApplicationRunner(runtime, config.runtime().shutdownHook(), generated.serviceName());
+    }
+
+    private SerializerRegistry resolveSerializers(GeneratedRingloomApplication generated) {
+        SerializerRegistry.Builder builder = SerializerRegistry.builder();
+        generated.registerSerializers(builder);
+        serializers.registerInto(builder);
+        return builder.build();
     }
 
     private static GeneratedRingloomApplication discoverGeneratedApplication(String serviceName) {
@@ -158,6 +168,7 @@ public final class RingloomBootstrap {
      * Builder for {@link RingloomBootstrap}.
      */
     public static final class Builder {
+
         private RingloomApplicationConfig config;
 
         private Builder() {}

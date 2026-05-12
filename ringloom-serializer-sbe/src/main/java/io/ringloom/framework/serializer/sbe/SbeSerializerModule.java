@@ -8,14 +8,10 @@ import io.ringloom.framework.serialization.SerializerRegistry;
  * Serializer module for SBE-based codecs.
  *
  * <p>SBE codecs are template-specific and are normally wired by generated application code using
- * {@link SbeCodecFactory}; this module keeps the serializer name discoverable without registering
+ * {@link SbeCodecFactory}; this module provides an explicit integration point without registering
  * global flyweight singletons.
  */
 public final class SbeSerializerModule implements SerializerModule {
-    @Override
-    public String name() {
-        return "sbe";
-    }
 
     @Override
     public void register(SerializerRegistry.Builder builder) {

@@ -11,6 +11,7 @@ import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +38,12 @@ import javax.tools.StandardLocation;
  * Annotation processor that generates RingLoom clients, dispatchers, and application metadata.
  */
 public final class RingloomFrameworkProcessor extends AbstractProcessor {
+
+    private static final String MEMORY_SEGMENT = "java.lang.foreign.MemorySegment";
+    private static final String RINGLOOM_MESSAGE = "io.ringloom.service.RingloomMessage";
+    private static final String MESSAGE_CONTEXT = "io.ringloom.framework.dispatch.MessageContext";
+    private static final String SBE_SERIALIZER = "sbe";
+
     private final TemplateRenderer templates = new TemplateRenderer();
     private boolean generated;
 
@@ -64,7 +71,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         applications.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
 
         for (TypeElement client : clients) {
-            validateClient(client);
+            validateClient(client, elements);
             generateClient(client, elements);
         }
         if (!components.isEmpty() || !applications.isEmpty()) {
@@ -81,7 +88,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return false;
     }
 
-    private void validateClient(TypeElement client) {
+    private void validateClient(TypeElement client, Elements elements) {
         if (client.getKind() != ElementKind.INTERFACE) {
             error(client, "@RingloomClient may only annotate interfaces");
             return;
@@ -115,8 +122,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 error(method, "currently supported generated client shape is int method(payload)");
                 continue;
             }
-            if (!isMemorySegmentOnly(method) && request.serializer().isBlank()) {
-                error(method, "serializer-backed client methods must declare @RingloomRequest.serializer");
+            if (!isMemorySegmentOnly(method)
+                    && usesSbeSerializer(
+                            request.serializer(),
+                            method.getParameters().getFirst().asType().toString())) {
+                validateSbeClientPayload(method.getParameters().getFirst(), elements);
             }
         }
     }
@@ -139,10 +149,14 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     templates.render(
                             "client.java.mustache",
                             Map.of(
-                                    "packageName", pkg,
-                                    "generatedName", generatedName,
-                                    "simpleName", simpleName,
-                                    "methodSources", methods.toString())));
+                                    "packageName",
+                                    pkg,
+                                    "generatedName",
+                                    generatedName,
+                                    "simpleName",
+                                    simpleName,
+                                    "methodSources",
+                                    methods.toString())));
         } catch (IOException ex) {
             error(client, "failed to generate client: " + ex.getMessage());
         }
@@ -152,12 +166,17 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
         String payloadType = method.getParameters().getFirst().asType().toString();
         Map<String, Object> model = Map.of(
-                "methodName", method.getSimpleName().toString(),
-                "payloadType", payloadType,
-                "payloadName", method.getParameters().getFirst().getSimpleName().toString(),
-                "templateId", request.templateId(),
-                "serializer", escape(request.serializer()));
-        if (payloadType.equals("java.lang.foreign.MemorySegment")) {
+                "methodName",
+                method.getSimpleName().toString(),
+                "payloadType",
+                payloadType,
+                "payloadName",
+                method.getParameters().getFirst().getSimpleName().toString(),
+                "templateId",
+                request.templateId(),
+                "serializer",
+                escape(request.serializer()));
+        if (payloadType.equals(MEMORY_SEGMENT)) {
             return templates.render("client-memory-method.java.mustache", model);
         }
         return templates.render("client-serializer-method.java.mustache", model);
@@ -181,7 +200,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 if (previous != null) {
                     error(method, "duplicate RingLoom handler template id " + annotation.templateId());
                 }
-                validateHandler(method);
+                validateHandler(method, elements);
                 handlers.add(new Handler(component, method, annotation.templateId()));
             }
         }
@@ -194,7 +213,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         String appName = appSimple + "_RingloomApplication";
         String providerName = appSimple + "_RingloomApplicationProvider";
         generateDispatcher(pkg, dispatcherName, handlers, application);
-        generateApplicationClass(pkg, appName, dispatcherName, service, clients, application);
+        generateApplicationClass(pkg, appName, dispatcherName, service, clients, handlers, application, elements);
         generateProvider(pkg, providerName, appName, application);
         generateServiceFile(pkg, providerName);
     }
@@ -217,10 +236,14 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     templates.render(
                             "dispatcher.java.mustache",
                             Map.of(
-                                    "packageName", pkg,
-                                    "dispatcherName", dispatcherName,
-                                    "handlerFields", fields,
-                                    "caseSources", cases.toString())));
+                                    "packageName",
+                                    pkg,
+                                    "dispatcherName",
+                                    dispatcherName,
+                                    "handlerFields",
+                                    fields,
+                                    "caseSources",
+                                    cases.toString())));
         } catch (IOException ex) {
             error(origin, "failed to generate dispatcher: " + ex.getMessage());
         }
@@ -235,11 +258,16 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return templates.render(
                 "dispatcher-direct-case.java.mustache",
                 Map.of(
-                        "templateId", handler.templateId(),
-                        "returnsInt", returnsInt(method),
-                        "fieldName", fieldName,
-                        "methodName", method.getSimpleName().toString(),
-                        "arguments", handlerArguments(method, null)));
+                        "templateId",
+                        handler.templateId(),
+                        "returnsInt",
+                        returnsInt(method),
+                        "fieldName",
+                        fieldName,
+                        "methodName",
+                        method.getSimpleName().toString(),
+                        "arguments",
+                        handlerArguments(method, null)));
     }
 
     private String serializerDispatcherCaseSource(String fieldName, Handler handler, VariableElement payloadParameter)
@@ -250,13 +278,20 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return templates.render(
                 "dispatcher-serializer-case.java.mustache",
                 Map.of(
-                        "templateId", handler.templateId(),
-                        "returnsInt", returnsInt(method),
-                        "fieldName", fieldName,
-                        "methodName", method.getSimpleName().toString(),
-                        "payloadType", payloadType,
-                        "serializer", escape(annotation.serializer()),
-                        "arguments", handlerArguments(method, payloadParameter)));
+                        "templateId",
+                        handler.templateId(),
+                        "returnsInt",
+                        returnsInt(method),
+                        "fieldName",
+                        fieldName,
+                        "methodName",
+                        method.getSimpleName().toString(),
+                        "payloadType",
+                        payloadType,
+                        "serializer",
+                        escape(annotation.serializer()),
+                        "arguments",
+                        handlerArguments(method, payloadParameter)));
     }
 
     private String handlerArguments(ExecutableElement method, VariableElement serializerPayloadParameter) {
@@ -271,11 +306,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 arguments.append("decoded");
             } else {
                 String type = parameter.asType().toString();
-                if (type.equals("io.ringloom.service.RingloomMessage")) {
+                if (type.equals(RINGLOOM_MESSAGE)) {
                     arguments.append("message");
-                } else if (type.equals("io.ringloom.framework.dispatch.MessageContext")) {
+                } else if (type.equals(MESSAGE_CONTEXT)) {
                     arguments.append("context");
-                } else if (type.equals("java.lang.foreign.MemorySegment")) {
+                } else if (type.equals(MEMORY_SEGMENT)) {
                     arguments.append("context.payloadSegment()");
                 }
             }
@@ -289,7 +324,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             String dispatcherName,
             String service,
             List<TypeElement> clients,
-            TypeElement origin) {
+            List<Handler> handlers,
+            TypeElement origin,
+            Elements elements) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
         try {
             StringBuilder clientBindings = new StringBuilder();
@@ -315,14 +352,149 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     templates.render(
                             "application.java.mustache",
                             Map.of(
-                                    "packageName", pkg,
-                                    "appName", appName,
-                                    "dispatcherName", dispatcherName,
-                                    "serviceName", escape(service),
-                                    "clientBindingSources", clientBindings.toString())));
+                                    "packageName",
+                                    pkg,
+                                    "appName",
+                                    appName,
+                                    "dispatcherName",
+                                    dispatcherName,
+                                    "serviceName",
+                                    escape(service),
+                                    "clientBindingSources",
+                                    clientBindings.toString(),
+                                    "serializerRegistrationSources",
+                                    serializerRegistrationSources(clients, handlers, elements))));
         } catch (IOException ex) {
             error(origin, "failed to generate application: " + ex.getMessage());
         }
+    }
+
+    private String serializerRegistrationSources(List<TypeElement> clients, List<Handler> handlers, Elements elements) {
+        Map<String, String> registrations = new LinkedHashMap<>();
+        for (TypeElement client : clients) {
+            for (Element enclosed : client.getEnclosedElements()) {
+                if (!(enclosed instanceof ExecutableElement method)) {
+                    continue;
+                }
+                RingloomRequest request = method.getAnnotation(RingloomRequest.class);
+                if (request == null) {
+                    continue;
+                }
+                if (isMemorySegmentOnly(method)) {
+                    continue;
+                }
+                String payloadType = method.getParameters().getFirst().asType().toString();
+                if (!usesSbeSerializer(request.serializer(), payloadType)) {
+                    continue;
+                }
+                registrations.putIfAbsent(
+                        "client|sbe|" + request.templateId() + "|" + payloadType,
+                        sbeClientRegistrationSource(SBE_SERIALIZER, request.templateId(), payloadType, elements));
+            }
+        }
+        for (Handler handler : handlers) {
+            VariableElement payloadParameter = serializerPayloadParameter(handler.method());
+            if (payloadParameter == null) {
+                continue;
+            }
+            RingloomHandler annotation = handler.method().getAnnotation(RingloomHandler.class);
+            if (annotation == null) {
+                continue;
+            }
+            String payloadType = payloadParameter.asType().toString();
+            if (!usesSbeSerializer(annotation.serializer(), payloadType)) {
+                continue;
+            }
+            registrations.putIfAbsent(
+                    "handler|sbe|" + handler.templateId() + "|" + payloadType,
+                    sbeHandlerRegistrationSource(SBE_SERIALIZER, handler.templateId(), payloadType, elements));
+        }
+        StringBuilder out = new StringBuilder();
+        for (String source : registrations.values()) {
+            out.append(source);
+        }
+        return out.toString();
+    }
+
+    private String sbeClientRegistrationSource(
+            String serializer, int templateId, String payloadType, Elements elements) {
+        SbePayloadModel payload = requireSbeDtoPayload(payloadType, null, elements);
+        return """
+            builder.encoder(
+                \"%s\",
+                %s.class,
+                io.ringloom.framework.serializer.sbe.SbeCodecFactory.encoder(
+                    %d,
+                    (value, context) -> value.computeEncodedLength(),
+                    (value, target, context) -> {
+                      %s encoder = context.codec(%s.class, %s::new);
+                      encoder.wrap(target, 0);
+                      %s.encodeWith(encoder, value);
+                      return encoder.encodedLength();
+                    }));
+        """.formatted(
+                        escape(serializer),
+                        payload.dtoType(),
+                        templateId,
+                        payload.encoderType(),
+                        payload.encoderType(),
+                        payload.encoderType(),
+                        payload.dtoType());
+    }
+
+    private String sbeHandlerRegistrationSource(
+            String serializer, int templateId, String payloadType, Elements elements) {
+        SbePayloadModel payload = requireSbePayload(payloadType, null, elements);
+        if (payload.decoderPayload()) {
+            return """
+                builder.flyweight(
+                    \"%s\",
+                    %s.class,
+                    io.ringloom.framework.serializer.sbe.SbeCodecFactory.flyweight(
+                        %d,
+                        %s.class,
+                        %s::new,
+                        (decoder, source, context) -> decoder.wrap(
+                            source,
+                            0,
+                            %s.BLOCK_LENGTH,
+                            %s.SCHEMA_VERSION)));
+            """.formatted(
+                            escape(serializer),
+                            payload.decoderType(),
+                            templateId,
+                            payload.decoderType(),
+                            payload.decoderType(),
+                            payload.decoderType(),
+                            payload.decoderType());
+        }
+        return """
+            builder.decoder(
+                \"%s\",
+                %s.class,
+                new io.ringloom.framework.serializer.sbe.SbeDtoMessageDecoder<>(
+                    %d,
+                    %s.class,
+                    %s::new,
+                    %s.class,
+                    %s::new,
+                    (decoder, source, context) -> decoder.wrap(
+                        source,
+                        0,
+                        %s.BLOCK_LENGTH,
+                        %s.SCHEMA_VERSION),
+                    %s::decodeWith));
+        """.formatted(
+                        escape(serializer),
+                        payload.dtoType(),
+                        templateId,
+                        payload.decoderType(),
+                        payload.decoderType(),
+                        payload.dtoType(),
+                        payload.dtoType(),
+                        payload.decoderType(),
+                        payload.decoderType(),
+                        payload.dtoType());
     }
 
     private void generateProvider(String pkg, String providerName, String appName, TypeElement origin) {
@@ -363,7 +535,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
-    private void validateHandler(ExecutableElement method) {
+    private void validateHandler(ExecutableElement method, Elements elements) {
         if (!returnsInt(method) && !method.getReturnType().toString().equals("void")) {
             error(method, "RingLoom handler must return int status or void");
         }
@@ -371,14 +543,10 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         int serializerPayloads = 0;
         for (VariableElement parameter : method.getParameters()) {
             String type = parameter.asType().toString();
-            if (!type.equals("io.ringloom.service.RingloomMessage")
-                    && !type.equals("io.ringloom.framework.dispatch.MessageContext")
-                    && !type.equals("java.lang.foreign.MemorySegment")) {
+            if (!type.equals(RINGLOOM_MESSAGE) && !type.equals(MESSAGE_CONTEXT) && !type.equals(MEMORY_SEGMENT)) {
                 serializerPayloads++;
-                if (handler == null || handler.serializer().isBlank()) {
-                    error(
-                            method,
-                            "serializer-backed handler parameter " + type + " requires @RingloomHandler.serializer");
+                if (handler != null && usesSbeSerializer(handler.serializer(), type)) {
+                    validateSbeHandlerPayload(parameter, elements);
                 }
             }
         }
@@ -387,9 +555,61 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
+    private void validateSbeClientPayload(VariableElement parameter, Elements elements) {
+        requireSbeDtoPayload(parameter.asType().toString(), parameter, elements);
+    }
+
+    private void validateSbeHandlerPayload(VariableElement parameter, Elements elements) {
+        requireSbePayload(parameter.asType().toString(), parameter, elements);
+    }
+
+    private SbePayloadModel requireSbeDtoPayload(String payloadType, Element origin, Elements elements) {
+        SbePayloadModel payload = requireSbePayload(payloadType, origin, elements);
+        if (!payload.dtoPayload()) {
+            error(origin, "SBE client payload type must be a generated *Dto type: " + payloadType);
+        }
+        requireTypeExists(origin, elements, payload.encoderType(), "missing generated SBE encoder type ");
+        return payload;
+    }
+
+    private SbePayloadModel requireSbePayload(String payloadType, Element origin, Elements elements) {
+        SbePayloadModel payload = sbePayloadModel(payloadType);
+        if (payload == null) {
+            error(origin, "unsupported SBE payload type; expected generated *Dto or *Decoder type: " + payloadType);
+            return new SbePayloadModel(payloadType, payloadType + "Encoder", payloadType + "Decoder", false, true);
+        }
+        requireTypeExists(origin, elements, payload.decoderType(), "missing generated SBE decoder type ");
+        if (payload.dtoPayload()) {
+            requireTypeExists(origin, elements, payload.dtoType(), "missing generated SBE DTO type ");
+        }
+        return payload;
+    }
+
+    private void requireTypeExists(Element origin, Elements elements, String typeName, String prefix) {
+        if (elements.getTypeElement(typeName) == null) {
+            error(origin, prefix + typeName);
+        }
+    }
+
+    private boolean usesSbeSerializer(String serializer, String payloadType) {
+        return (SBE_SERIALIZER.equals(serializer) || (serializer.isBlank() && sbePayloadModel(payloadType) != null));
+    }
+
+    private SbePayloadModel sbePayloadModel(String payloadType) {
+        if (payloadType.endsWith("Dto")) {
+            String baseType = payloadType.substring(0, payloadType.length() - 3);
+            return new SbePayloadModel(payloadType, baseType + "Encoder", baseType + "Decoder", true, false);
+        }
+        if (payloadType.endsWith("Decoder")) {
+            String baseType = payloadType.substring(0, payloadType.length() - 7);
+            return new SbePayloadModel(baseType + "Dto", baseType + "Encoder", payloadType, false, true);
+        }
+        return null;
+    }
+
     private boolean isMemorySegmentOnly(ExecutableElement method) {
-        return method.getParameters().size() == 1
-                && method.getParameters().getFirst().asType().toString().equals("java.lang.foreign.MemorySegment");
+        return (method.getParameters().size() == 1
+                && method.getParameters().getFirst().asType().toString().equals(MEMORY_SEGMENT));
     }
 
     private boolean isSingleParameter(ExecutableElement method) {
@@ -411,9 +631,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private boolean isSpecialHandlerParameter(VariableElement parameter) {
         String type = parameter.asType().toString();
-        return type.equals("io.ringloom.service.RingloomMessage")
-                || type.equals("io.ringloom.framework.dispatch.MessageContext")
-                || type.equals("java.lang.foreign.MemorySegment");
+        return (type.equals(RINGLOOM_MESSAGE) || type.equals(MESSAGE_CONTEXT) || type.equals(MEMORY_SEGMENT));
     }
 
     private void validateTemplate(Element element, int templateId) {
@@ -454,4 +672,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     }
 
     private record Handler(TypeElement component, ExecutableElement method, int templateId) {}
+
+    private record SbePayloadModel(
+            String dtoType, String encoderType, String decoderType, boolean dtoPayload, boolean decoderPayload) {}
 }

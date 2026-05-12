@@ -4,6 +4,8 @@ package io.ringloom.framework;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import io.ringloom.framework.config.IdleStrategyKind;
 import io.ringloom.framework.dispatch.MessageContext;
@@ -24,6 +26,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 final class CoreFrameworkDefaultsTest {
+
     @Test
     void createsBuiltInIdleStrategies() {
         // Given / When / Then
@@ -90,10 +93,27 @@ final class CoreFrameworkDefaultsTest {
         // When / Then
         assertThat(application.partitionKeyExtractors()).isEmpty();
         assertThat(application.requiresCorrelationAwareSends()).isFalse();
+        assertThatCode(() -> application.registerSerializers(SerializerRegistry.builder()))
+                .doesNotThrowAnyException();
         assertThatCode(() -> application.initializeSerializers(SerializerRegistry.EMPTY))
                 .doesNotThrowAnyException();
         assertThatCode(() -> application.onRuntimeStarted(null)).doesNotThrowAnyException();
         assertThatCode(() -> application.onRuntimeStopping(null)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void applicationRunnerAwaitShutdownDelegatesToRuntimeShutdown() throws Exception {
+        // Given
+        RingloomRuntime runtime = mock(RingloomRuntime.class);
+        RingloomApplicationRunner application = new RingloomApplicationRunner(runtime, false, "orders");
+
+        // When
+        application.awaitShutdown();
+        application.close();
+
+        // Then
+        verify(runtime).awaitShutdown();
+        verify(runtime).close();
     }
 
     @Test

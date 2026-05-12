@@ -11,6 +11,7 @@ mockito = "5.23.0"
 palantirJavaFormat = "2.90.0"
 slf4j = "2.0.17"
 spotless = "8.4.0"
+sbe = "1.37.1"
 
 [libraries]
 assertj = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }
@@ -26,6 +27,7 @@ ringloomJavaBindings = { group = "io.ringloom", name = "ringloom-java-bindings",
 slf4jApi = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
 slf4jSimple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
 snakeYamlEngine = { group = "org.snakeyaml", name = "snakeyaml-engine", version.ref = "snakeYamlEngine" }
+sbeTool = { group = "uk.co.real-logic", name = "sbe-tool", version.ref = "sbe" }
 
 [bundles]
 testLibs = ["junitJupiter", "assertj", "mockitoCore"]

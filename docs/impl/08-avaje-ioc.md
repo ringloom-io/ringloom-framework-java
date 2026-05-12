@@ -33,7 +33,7 @@ Beans to expose:
 2. `SerializerRegistry`.
 3. `GeneratedRingloomApplication`.
 4. `RingloomRuntime`.
-5. `RingloomApplication`.
+5. `RingloomApplicationRunner`.
 6. `RingloomMetrics`.
 7. `MessageExecutionPolicy`.
 8. `RequestResponseRegistry`.
@@ -109,7 +109,11 @@ Serializer modules can be Avaje beans:
 public final class OrdersSerializers {
     @Bean
     SerializerRegistry serializerRegistry(List<SerializerModule> modules) {
-        return SerializerRegistry.builder().modules(modules).build();
+        SerializerRegistry.Builder builder = SerializerRegistry.builder();
+        for (SerializerModule module : modules) {
+            builder.module(module);
+        }
+        return builder.build();
     }
 }
 ```
