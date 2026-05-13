@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.ioc.avaje;
 
+import io.avaje.inject.BeanScope;
 import io.avaje.inject.spi.AvajeModule;
 import io.avaje.inject.spi.Builder;
+import io.avaje.inject.spi.InjectExtension;
 import io.ringloom.framework.RingloomApplicationRunner;
 import io.ringloom.framework.RingloomBootstrap;
 import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomApplicationConfig;
 import io.ringloom.framework.config.RingloomConfigLoader;
+import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.dispatch.MessageExecutionPolicy;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
@@ -18,13 +21,19 @@ import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.request.RequestResponseRegistry;
 import io.ringloom.framework.serialization.SerializerModule;
 import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.service.RingloomMessage;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceLoader;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -111,9 +120,16 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         RingloomApplicationConfig config = resolveApplicationConfig(builder, avajeConfig);
         registerAbsent(builder, RingloomApplicationConfig.class, config);
 
-        GeneratedRingloomApplication generatedApplication = resolveGeneratedApplication(builder, config);
+        GeneratedRingloomApplication discoveredApplication = resolveGeneratedApplication(builder, config);
+        Map<Class<?>, Object> componentBeans = new LinkedHashMap<>();
+        GeneratedRingloomApplication generatedApplication = discoveredApplication.withComponents(componentBeans);
+        AtomicReference<RingloomRuntime> runtimeReference = new AtomicReference<>();
+        if (avajeConfig.registerGeneratedClients()) {
+            registerLazyGeneratedClients(builder, generatedApplication, runtimeReference);
+        }
+        buildDiscoveredAvajeModules(builder);
         registerAbsent(builder, GeneratedRingloomApplication.class, generatedApplication);
-        registerAbsent(builder, GeneratedMessageDispatcher.class, generatedApplication.dispatcher());
+        registerAbsent(builder, GeneratedMessageDispatcher.class, new DeferredMessageDispatcher(generatedApplication));
 
         SerializerRegistry serializers = resolveSerializers(builder, generatedApplication);
         registerAbsent(builder, SerializerRegistry.class, serializers);
@@ -123,13 +139,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
 
         RingloomRuntime runtime =
                 new RingloomRuntime(config, generatedApplication, serializers, metrics, resolveLogger());
-        if (avajeConfig.autoStart()) {
-            runtime.start();
-            if (avajeConfig.startEventLoops()) {
-                runtime.startEventLoops(
-                        Thread.ofPlatform().name("ringloom-avaje-", 0).factory());
-            }
-        }
+        runtimeReference.set(runtime);
         registerAbsent(builder, RingloomRuntime.class, runtime);
 
         RingloomApplicationRunner application = new RingloomApplicationRunner(
@@ -139,11 +149,22 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
 
         registerAbsent(builder, RequestResponseRegistry.class, runtime.requestResponseRegistry());
         if (avajeConfig.autoStart()) {
-            registerAbsent(builder, MessageExecutionPolicy.class, runtime.messageExecutionPolicy());
+            registerAbsent(
+                    builder,
+                    MessageExecutionPolicy.class,
+                    (message, ingressContext) ->
+                            runtime.messageExecutionPolicy().onMessage(message, ingressContext));
         }
-        if (avajeConfig.registerGeneratedClients()) {
-            registerGeneratedClients(builder, generatedApplication, runtime);
-        }
+        builder.addPostConstruct(scope -> {
+            populateComponentBeans(scope, generatedApplication, componentBeans);
+            if (avajeConfig.autoStart()) {
+                runtime.start();
+                if (avajeConfig.startEventLoops()) {
+                    runtime.startEventLoops(
+                            Thread.ofPlatform().name("ringloom-avaje-", 0).factory());
+                }
+            }
+        });
     }
 
     /**
@@ -228,6 +249,76 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         return registryBuilder.build();
     }
 
+    private void populateComponentBeans(
+            BeanScope scope, GeneratedRingloomApplication generatedApplication, Map<Class<?>, Object> components) {
+        for (Class<?> componentType : generatedApplication.componentTypes()) {
+            if (!components.containsKey(componentType)) {
+                getOptionalBean(scope, componentType).ifPresent(bean -> components.put(componentType, bean));
+            }
+        }
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static Optional<Object> getOptionalBean(BeanScope scope, Class<?> type) {
+        return (Optional) scope.getOptional((Class) type);
+    }
+
+    private void buildDiscoveredAvajeModules(Builder builder) {
+        for (InjectExtension extension : ServiceLoader.load(InjectExtension.class)) {
+            if (extension instanceof AvajeModule module && module.getClass() != getClass()) {
+                module.build(builder);
+            }
+        }
+    }
+
+    private void registerLazyGeneratedClients(
+            Builder builder,
+            GeneratedRingloomApplication generatedApplication,
+            AtomicReference<RingloomRuntime> runtimeReference) {
+        for (GeneratedClientBinding<?> binding : generatedApplication.clients()) {
+            registerLazyGeneratedClient(builder, binding, runtimeReference);
+        }
+    }
+
+    private <T> void registerLazyGeneratedClient(
+            Builder builder, GeneratedClientBinding<T> binding, AtomicReference<RingloomRuntime> runtimeReference) {
+        Class<T> clientType = binding.clientType();
+        if (!builder.contains(clientType)) {
+            builder.withBean(clientType, lazyGeneratedClient(clientType, runtimeReference));
+        }
+    }
+
+    private <T> T lazyGeneratedClient(Class<T> clientType, AtomicReference<RingloomRuntime> runtimeReference) {
+        Object proxy = Proxy.newProxyInstance(
+                clientType.getClassLoader(), new Class<?>[] {clientType}, (instance, method, args) -> {
+                    if (method.getDeclaringClass() == Object.class) {
+                        return objectMethod(instance, method.getName(), args);
+                    }
+                    RingloomRuntime runtime = runtimeReference.get();
+                    if (runtime == null) {
+                        throw new IllegalStateException(
+                                "RingLoom runtime is not available yet for " + clientType.getName());
+                    }
+                    try {
+                        method.setAccessible(true);
+                        return method.invoke(runtime.generatedClient(clientType), args);
+                    } catch (InvocationTargetException ex) {
+                        throw ex.getCause();
+                    }
+                });
+        return clientType.cast(proxy);
+    }
+
+    private static Object objectMethod(Object instance, String methodName, Object[] args) {
+        return switch (methodName) {
+            case "toString" ->
+                "LazyRingloomClient[" + instance.getClass().getInterfaces()[0].getName() + "]";
+            case "hashCode" -> System.identityHashCode(instance);
+            case "equals" -> instance == args[0];
+            default -> throw new UnsupportedOperationException(methodName);
+        };
+    }
+
     private RingloomMetrics resolveMetrics(Builder builder) {
         if (suppliedMetrics != null) {
             return suppliedMetrics;
@@ -270,6 +361,14 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
                     "multiple generated RingLoom applications found for service " + serviceName);
         }
         return matches.getFirst();
+    }
+
+    private record DeferredMessageDispatcher(GeneratedRingloomApplication generatedApplication)
+            implements GeneratedMessageDispatcher {
+        @Override
+        public int onMessage(RingloomMessage message, MessageContext context) {
+            return generatedApplication.dispatcher().onMessage(message, context);
+        }
     }
 
     private static <T> void registerAbsent(Builder builder, Class<T> type, T bean) {

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: risk-service
+    storagePath: /tmp/ringloom-framework-order-management-avaje/storage
+    group: order-management-java-avaje
+  serializers:
+    default: fory

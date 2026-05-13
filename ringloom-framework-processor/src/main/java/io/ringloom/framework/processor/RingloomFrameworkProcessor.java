@@ -64,7 +64,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
         Elements elements = processingEnv.getElementUtils();
         List<TypeElement> clients = types(roundEnv.getElementsAnnotatedWith(RingloomClient.class));
-        List<TypeElement> components = types(roundEnv.getElementsAnnotatedWith(RingloomServiceComponent.class));
+        List<TypeElement> components = componentTypes(roundEnv);
         List<TypeElement> applications = types(roundEnv.getElementsAnnotatedWith(RingloomApplication.class));
         clients.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
         components.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
@@ -222,12 +222,16 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         String qualifiedName = pkg.isEmpty() ? dispatcherName : pkg + "." + dispatcherName;
         try {
             List<Map<String, Object>> fields = new ArrayList<>();
+            Map<String, String> fieldNames = new LinkedHashMap<>();
             StringBuilder cases = new StringBuilder();
-            for (int i = 0; i < handlers.size(); i++) {
-                Handler handler = handlers.get(i);
-                String fieldName = "h" + i;
-                fields.add(Map.of(
-                        "componentType", handler.component().getQualifiedName().toString(), "fieldName", fieldName));
+            for (Handler handler : handlers) {
+                String componentType = handler.component().getQualifiedName().toString();
+                String fieldName = fieldNames.get(componentType);
+                if (fieldName == null) {
+                    fieldName = "h" + fieldNames.size();
+                    fieldNames.put(componentType, fieldName);
+                    fields.add(Map.of("componentType", componentType, "fieldName", fieldName));
+                }
                 cases.append(dispatcherCaseSource(fieldName, handler));
             }
             writeSourceFile(
@@ -362,6 +366,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                                     escape(service),
                                     "clientBindingSources",
                                     clientBindings.toString(),
+                                    "componentTypeSources",
+                                    componentTypeSources(handlers),
                                     "serializerRegistrationSources",
                                     serializerRegistrationSources(clients, handlers, elements))));
         } catch (IOException ex) {
@@ -638,6 +644,38 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         if (templateId < 0 || templateId > 65_535) {
             error(element, "template id must be in unsigned 16-bit range: " + templateId);
         }
+    }
+
+    private List<TypeElement> componentTypes(RoundEnvironment roundEnv) {
+        Map<String, TypeElement> result = new LinkedHashMap<>();
+        for (TypeElement component : types(roundEnv.getElementsAnnotatedWith(RingloomServiceComponent.class))) {
+            result.put(component.getQualifiedName().toString(), component);
+        }
+        for (Element handler : roundEnv.getElementsAnnotatedWith(RingloomHandler.class)) {
+            Element enclosing = handler.getEnclosingElement();
+            if (enclosing instanceof TypeElement component) {
+                result.putIfAbsent(component.getQualifiedName().toString(), component);
+            }
+        }
+        return new ArrayList<>(result.values());
+    }
+
+    private String componentTypeSources(List<Handler> handlers) {
+        Map<String, String> componentTypes = new LinkedHashMap<>();
+        for (Handler handler : handlers) {
+            String type = handler.component().getQualifiedName().toString();
+            componentTypes.putIfAbsent(type, "        " + type + ".class");
+        }
+        StringBuilder sources = new StringBuilder();
+        int index = 0;
+        for (String source : componentTypes.values()) {
+            sources.append(source);
+            if (++index < componentTypes.size()) {
+                sources.append(",");
+            }
+            sources.append("\n");
+        }
+        return sources.toString();
     }
 
     private static List<TypeElement> types(Set<? extends Element> elements) {

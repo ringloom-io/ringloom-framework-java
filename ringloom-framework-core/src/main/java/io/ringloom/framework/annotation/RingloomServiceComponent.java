@@ -9,6 +9,9 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)
 /**
- * Marks a class as participating in generated RingLoom service wiring.
+ * Optionally marks a class as participating in generated RingLoom service wiring.
+ *
+ * <p>Classes that declare {@link RingloomHandler} methods are discovered automatically; this
+ * annotation remains useful as an explicit marker for non-IoC applications and source readability.
  */
 public @interface RingloomServiceComponent {}

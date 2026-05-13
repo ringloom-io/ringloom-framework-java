@@ -32,6 +32,25 @@ public interface GeneratedRingloomApplication {
     GeneratedMessageDispatcher dispatcher();
 
     /**
+     * Returns service component types consumed by the generated dispatcher.
+     *
+     * @return generated handler component types
+     */
+    default List<Class<?>> componentTypes() {
+        return List.of();
+    }
+
+    /**
+     * Returns an application instance backed by externally managed component instances.
+     *
+     * @param components component instances keyed by their concrete type
+     * @return an application using the supplied components
+     */
+    default GeneratedRingloomApplication withComponents(Map<Class<?>, ?> components) {
+        return this;
+    }
+
+    /**
      * Registers generated serializers into the supplied builder before runtime startup.
      *
      * @param builder the serializer registry builder to contribute to

@@ -13,8 +13,18 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
   private SerializerRegistry serializers = SerializerRegistry.EMPTY;
   private final ThreadLocal<DecodeContext> decodeContexts = ThreadLocal.withInitial(DecodeContext::new);
 {{#handlerFields}}
-  private final {{{componentType}}} {{fieldName}} = new {{{componentType}}}();
+  private final {{{componentType}}} {{fieldName}};
 {{/handlerFields}}
+
+  public {{dispatcherName}}() {
+    this(java.util.Map.of());
+  }
+
+  public {{dispatcherName}}(java.util.Map<Class<?>, ?> components) {
+{{#handlerFields}}
+    this.{{fieldName}} = component(components, {{{componentType}}}.class);
+{{/handlerFields}}
+  }
 
   public void initializeSerializers(SerializerRegistry serializers) {
     this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
@@ -25,5 +35,23 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
     return switch (context.templateId()) {
 {{{caseSources}}}      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
     };
+  }
+
+  private static <T> T component(java.util.Map<Class<?>, ?> components, Class<T> type) {
+    Object component = components.get(type);
+    if (component != null) {
+      return type.cast(component);
+    }
+    return instantiate(type);
+  }
+
+  private static <T> T instantiate(Class<T> type) {
+    try {
+      java.lang.reflect.Constructor<T> constructor = type.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      return constructor.newInstance();
+    } catch (ReflectiveOperationException ex) {
+      throw new IllegalStateException("failed to create RingLoom component " + type.getName(), ex);
+    }
   }
 }

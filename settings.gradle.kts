@@ -22,4 +22,5 @@ include(
     "ringloom-serializer-fory",
     "ringloom-ioc-avaje",
     "samples:order-management",
+    "samples:order-management-avaje",
 )

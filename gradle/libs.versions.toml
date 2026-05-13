@@ -17,6 +17,7 @@ sbe = "1.37.1"
 assertj = { group = "org.assertj", name = "assertj-core", version.ref = "assertj" }
 agrona = { group = "org.agrona", name = "agrona", version.ref = "agrona" }
 avajeInject = { group = "io.avaje", name = "avaje-inject", version.ref = "avajeInject" }
+avajeInjectGenerator = { group = "io.avaje", name = "avaje-inject-generator", version.ref = "avajeInject" }
 foryCore = { group = "org.apache.fory", name = "fory-core", version.ref = "fory" }
 jmustache = { group = "com.samskivert", name = "jmustache", version.ref = "jmustache" }
 junitBom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }

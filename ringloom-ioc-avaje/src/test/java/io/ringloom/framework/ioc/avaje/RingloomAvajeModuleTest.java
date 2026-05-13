@@ -49,7 +49,7 @@ final class RingloomAvajeModuleTest {
             assertThat(scope.get(RingloomAvajeConfig.class)).isEqualTo(RingloomAvajeConfig.lazy());
             assertThat(scope.get(RingloomApplicationConfig.class)).isSameAs(config);
             assertThat(scope.get(GeneratedRingloomApplication.class)).isSameAs(generated);
-            assertThat(scope.get(GeneratedMessageDispatcher.class)).isSameAs(generated.dispatcher());
+            assertThat(scope.get(GeneratedMessageDispatcher.class)).isNotNull();
             assertThat(scope.get(SerializerRegistry.class).encoder("missing", String.class))
                     .isNull();
             assertThat(scope.get(RingloomMetrics.class)).isSameAs(UnavailableRingloomMetrics.INSTANCE);

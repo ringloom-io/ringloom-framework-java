@@ -8,7 +8,16 @@ import io.ringloom.framework.serialization.SerializerRegistry;
 import java.util.List;
 
 public final class {{appName}} implements GeneratedRingloomApplication {
-  private final {{dispatcherName}} dispatcher = new {{dispatcherName}}();
+  private final java.util.Map<Class<?>, ?> components;
+  private {{dispatcherName}} dispatcher;
+
+  public {{appName}}() {
+    this(java.util.Map.of());
+  }
+
+  public {{appName}}(java.util.Map<Class<?>, ?> components) {
+    this.components = java.util.Objects.requireNonNull(components, "components");
+  }
 
   @Override
   public String serviceName() {
@@ -22,16 +31,34 @@ public final class {{appName}} implements GeneratedRingloomApplication {
   }
 
   @Override
+  public List<Class<?>> componentTypes() {
+    return List.of(
+{{{componentTypeSources}}}    );
+  }
+
+  @Override
+  public GeneratedRingloomApplication withComponents(java.util.Map<Class<?>, ?> components) {
+    return new {{appName}}(components);
+  }
+
+  @Override
   public void registerSerializers(SerializerRegistry.Builder builder) {
 {{{serializerRegistrationSources}}}  }
 
   @Override
   public void initializeSerializers(SerializerRegistry serializers) {
-    dispatcher.initializeSerializers(serializers);
+    generatedDispatcher().initializeSerializers(serializers);
   }
 
   @Override
   public GeneratedMessageDispatcher dispatcher() {
+    return generatedDispatcher();
+  }
+
+  private {{dispatcherName}} generatedDispatcher() {
+    if (dispatcher == null) {
+      dispatcher = new {{dispatcherName}}(components);
+    }
     return dispatcher;
   }
 }
