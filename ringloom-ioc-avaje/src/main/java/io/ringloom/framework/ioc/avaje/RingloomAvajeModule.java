@@ -131,7 +131,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         registerAbsent(builder, GeneratedRingloomApplication.class, generatedApplication);
         registerAbsent(builder, GeneratedMessageDispatcher.class, new DeferredMessageDispatcher(generatedApplication));
 
-        SerializerRegistry serializers = resolveSerializers(builder, generatedApplication);
+        SerializerRegistry serializers = resolveSerializers(builder, generatedApplication, config);
         registerAbsent(builder, SerializerRegistry.class, serializers);
 
         RingloomMetrics metrics = resolveMetrics(builder);
@@ -231,9 +231,10 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
                 : suppliedGeneratedApplication;
     }
 
-    private SerializerRegistry resolveSerializers(Builder builder, GeneratedRingloomApplication generatedApplication) {
+    private SerializerRegistry resolveSerializers(
+            Builder builder, GeneratedRingloomApplication generatedApplication, RingloomApplicationConfig config) {
         SerializerRegistry.Builder registryBuilder = SerializerRegistry.builder();
-        generatedApplication.registerSerializers(registryBuilder);
+        generatedApplication.registerSerializers(registryBuilder, config.serializers());
         if (suppliedSerializers != null) {
             suppliedSerializers.registerInto(registryBuilder);
             return registryBuilder.build();

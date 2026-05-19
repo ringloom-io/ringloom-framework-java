@@ -187,7 +187,11 @@ final class RingloomFrameworkProcessorTest {
                     """),
                         source("test.PriceRequest", """
                     package test;
-                    public record PriceRequest(int id) {}
+                    public record PriceRequest(int id, PriceSide side) {}
+                    """),
+                        source("test.PriceSide", """
+                    package test;
+                    public enum PriceSide { BID, ASK }
                     """),
                         source("test.PricingClient", """
                     package test;
@@ -223,6 +227,130 @@ final class RingloomFrameworkProcessorTest {
                 .contains("serializers.flyweight(serializerName, test.PriceRequest.class)")
                 .contains("MessageDecoder<test.PriceRequest>")
                 .contains("serializers.decoder(serializerName, test.PriceRequest.class)");
+        assertThat(Files.readString(generated.resolve("test/SerializerApp_RingloomApplication.java")))
+                .contains("new io.ringloom.framework.serializer.fory.ForySerializerModule()")
+                .contains(
+                        "io.ringloom.framework.serializer.fory.ForySerializerConfig.from(serializers.entry(\"fory\"))")
+                .contains("foryTypes.add(test.PriceRequest.class)")
+                .contains("foryTypes.add(test.PriceSide.class)");
+    }
+
+    @Test
+    void generatesDefaultForyRegistrationsForBlankRecordSerializers() throws Exception {
+        // Given
+        Path classes = Files.createDirectories(tempDir.resolve("default-fory-classes"));
+        Path generated = Files.createDirectories(tempDir.resolve("default-fory-generated"));
+
+        // When
+        boolean success = compile(
+                classes,
+                generated,
+                List.of(
+                        source("test.DefaultForyApp", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomApplication;
+                    @RingloomApplication(service = "orders")
+                    public final class DefaultForyApp {}
+                    """),
+                        source("test.Order", """
+                    package test;
+                    public record Order(String symbol, OrderSide side) {}
+                    """),
+                        source("test.OrderSide", """
+                    package test;
+                    public enum OrderSide { BUY, SELL }
+                    """),
+                        source("test.OrderClient", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomClient;
+                    import io.ringloom.framework.annotation.RingloomRequest;
+                    @RingloomClient(service = "gateway")
+                    public interface OrderClient {
+                      @RingloomRequest(templateId = 41)
+                      int send(Order payload);
+                    }
+                    """)));
+
+        // Then
+        assertThat(success).isTrue();
+        assertThat(Files.readString(generated.resolve("test/DefaultForyApp_RingloomApplication.java")))
+                .contains("if (\"fory\".equals(serializers.defaultSerializer()))")
+                .contains("foryTypes.add(test.Order.class)")
+                .contains("foryTypes.add(test.OrderSide.class)");
+    }
+
+    @Test
+    void generatesVirtualThreadBlockingRequestAndDirectReplyShapes() throws Exception {
+        // Given
+        Path classes = Files.createDirectories(tempDir.resolve("rr-classes"));
+        Path generated = Files.createDirectories(tempDir.resolve("rr-generated"));
+
+        // When
+        boolean success = compile(
+                classes,
+                generated,
+                List.of(
+                        source("test.RequestResponseApp", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomApplication;
+                    @RingloomApplication(service = "terminal")
+                    public final class RequestResponseApp {}
+                    """),
+                        source("test.PriceRequest", """
+                    package test;
+                    public record PriceRequest(String symbol) {}
+                    """),
+                        source("test.PriceQuote", """
+                    package test;
+                    public record PriceQuote(String symbol, long bid, long ask) {}
+                    """),
+                        source("test.PricingClient", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomClient;
+                    import io.ringloom.framework.annotation.RingloomRequest;
+                    import io.ringloom.framework.annotation.RequestMode;
+                    import io.ringloom.framework.request.RequestTimeout;
+                    import io.ringloom.framework.request.RingloomRequestException;
+                    @RingloomClient(service = "pricing")
+                    public interface PricingClient {
+                      @RingloomRequest(
+                          templateId = 31,
+                          responseTemplateId = 32,
+                          serializer = "fory",
+                          mode = RequestMode.VIRTUAL_THREAD_BLOCKING)
+                      PriceQuote requestQuote(PriceRequest payload, RequestTimeout timeout)
+                          throws RingloomRequestException, InterruptedException;
+                    }
+                    """),
+                        source("test.TerminalClient", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomClient;
+                    import io.ringloom.framework.annotation.RingloomRequest;
+                    import io.ringloom.framework.annotation.RoutingMode;
+                    import io.ringloom.framework.dispatch.MessageContext;
+                    @RingloomClient(service = "terminal")
+                    public interface TerminalClient {
+                      @RingloomRequest(templateId = 32, serializer = "fory", routing = RoutingMode.DIRECT)
+                      int replyQuote(PriceQuote payload, MessageContext replyTo);
+                    }
+                    """)));
+
+        // Then
+        assertThat(success).isTrue();
+        assertThat(Files.readString(generated.resolve("test/PricingClient_RingloomClient.java")))
+                .contains("tryClaimRequest(31, pending.correlationId()")
+                .contains("pending.prepare(")
+                .contains("serializers.decoder(responseSerializerName, test.PriceQuote.class)")
+                .contains("awaiter.awaitNanos(timeoutNanos)");
+        assertThat(Files.readString(generated.resolve("test/TerminalClient_RingloomClient.java")))
+                .contains("tryClaimToRequest(")
+                .contains("replyTo.sourceNodeId()")
+                .contains("replyTo.correlationId()");
+        assertThat(Files.readString(generated.resolve("test/RequestResponseApp_RingloomDispatcher.java")))
+                .contains("resolvePendingResponse(context)")
+                .contains("pending.decodeResponse(context)")
+                .doesNotContain("context.correlationId() == 0")
+                .contains(".complete(pending, context.correlationId(), context.templateId(), status, decoded)");
     }
 
     private static boolean compile(Path classes, Path generated, List<SimpleJavaFileObject> sources) {

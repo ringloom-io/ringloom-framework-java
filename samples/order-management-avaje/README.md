@@ -1,6 +1,6 @@
 # Order Management Avaje/Fory Sample
 
-Same topology as `samples/order-management`, but booted through Avaje `BeanScope`/`RingloomAvajeModule` and serialized with Apache Fory records instead of SBE codecs.
+Same topology as `samples/order-management`, but booted through `AvajeRingloomBootstrap` and serialized with generated Apache Fory record registration instead of SBE codecs.
 
 Topology:
 
@@ -47,4 +47,4 @@ Manual tasks:
 ./gradlew :samples:order-management-avaje:runOrderSimulator --args="10000 25000"
 ```
 
-Look at `src/main/java/io/ringloom/samples/orders/common/AvajeRingloom.java` for Avaje bootstrapping, `OrderManagementModule.java` for the Fory `@Factory`, `src/*/java` handlers for `@Component`/`@Inject` client injection, and `src/main/java/io/ringloom/samples/orders/model` for the Fory payload records.
+Look at the `src/*/java` service mains for `AvajeRingloomBootstrap.fromYaml(...)`, handlers for `@Component`/`@Inject` client injection, and `src/main/java/io/ringloom/samples/orders/model` for the Fory payload records that are registered by generated application metadata.

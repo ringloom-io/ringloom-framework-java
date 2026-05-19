@@ -1,0 +1,66 @@
+
+  @Override
+  public {{{responseType}}} {{methodName}}({{{payloadType}}} {{payloadName}}, RequestTimeout timeout)
+      throws RingloomRequestException, InterruptedException {
+    java.util.Objects.requireNonNull(timeout, "timeout");
+    long timeoutNanos = timeout.duration().toNanos();
+    PendingRequest pending = runtime.requestResponseRegistry().acquire();
+    if (pending == null) {
+      throw new RingloomRequestException("request registry exhausted", RingloomHandlerStatus.REQUEST_CANCELLED);
+    }
+    RequestAwaiter awaiter = new RequestAwaiter();
+    awaiter.prepare(Thread.currentThread());
+    pending.prepare(
+        pending.correlationId(),
+        {{responseTemplateId}},
+        null,
+        null,
+        System.nanoTime() + timeoutNanos,
+        awaiter);
+    int registryStatus = runtime.requestResponseRegistry().register(pending);
+    if (registryStatus != RingloomHandlerStatus.OK) {
+      runtime.requestResponseRegistry().release(pending);
+      throw new RingloomRequestException("request registration failed", registryStatus);
+    }
+    try {
+      MemorySegment segment = {{payloadName}} == null ? MemorySegment.NULL : {{payloadName}};
+      try (BufferClaim requestClaim = lowLevelClient.newClaim()) {
+        int status = lowLevelClient.tryClaimRequest({{templateId}}, pending.correlationId(), segment.byteSize(), requestClaim);
+        if (status != RingloomStatus.OK) {
+          runtime.requestResponseRegistry().cancel(pending, status);
+          throw new RingloomRequestException("request send failed", status);
+        }
+        MemorySegment.copy(
+            segment,
+            ValueLayout.JAVA_BYTE,
+            0,
+            requestClaim.payloadSegment(),
+            ValueLayout.JAVA_BYTE,
+            0,
+            segment.byteSize());
+        status = requestClaim.commit();
+        if (status != RingloomStatus.OK) {
+          runtime.requestResponseRegistry().cancel(pending, status);
+          throw new RingloomRequestException("request commit failed", status);
+        }
+      }
+      try {
+        if (!awaiter.awaitNanos(timeoutNanos)) {
+          int cancelStatus = runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.REQUEST_TIMEOUT);
+          if (cancelStatus == RingloomHandlerStatus.REQUEST_TIMEOUT) {
+            throw new RingloomRequestException("request timed out", RingloomHandlerStatus.REQUEST_TIMEOUT);
+          }
+        }
+      } catch (InterruptedException ex) {
+        runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.REQUEST_CANCELLED);
+        throw ex;
+      }
+      int completionStatus = pending.completionStatus();
+      if (completionStatus != RingloomHandlerStatus.OK) {
+        throw new RingloomRequestException("request failed", completionStatus);
+      }
+      return ({{{responseType}}}) pending.responseValue();
+    } finally {
+      runtime.requestResponseRegistry().release(pending);
+    }
+  }

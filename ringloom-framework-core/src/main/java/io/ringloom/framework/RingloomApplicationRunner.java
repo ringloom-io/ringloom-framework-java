@@ -11,7 +11,9 @@ public final class RingloomApplicationRunner implements AutoCloseable {
 
     private final RingloomRuntime runtime;
     private final Thread shutdownHook;
+    private final AutoCloseable closeHook;
     private final AtomicBoolean shutdownHookRegistered = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
      * Creates an application runner for a started runtime.
@@ -30,7 +32,21 @@ public final class RingloomApplicationRunner implements AutoCloseable {
      * @param shutdownHookName the base thread name used for the shutdown hook when enabled
      */
     public RingloomApplicationRunner(RingloomRuntime runtime, boolean installShutdownHook, String shutdownHookName) {
+        this(runtime, installShutdownHook, shutdownHookName, null);
+    }
+
+    /**
+     * Creates an application runner and optionally installs a JVM shutdown hook.
+     *
+     * @param runtime the started runtime
+     * @param installShutdownHook whether to install a shutdown hook that closes the runtime
+     * @param shutdownHookName the base thread name used for the shutdown hook when enabled
+     * @param closeHook optional resource to close after the runtime
+     */
+    public RingloomApplicationRunner(
+            RingloomRuntime runtime, boolean installShutdownHook, String shutdownHookName, AutoCloseable closeHook) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
+        this.closeHook = closeHook;
         this.shutdownHook = installShutdownHook
                 ? new Thread(runtime::close, Objects.requireNonNull(shutdownHookName, "shutdownHookName") + "-shutdown")
                 : null;
@@ -66,8 +82,15 @@ public final class RingloomApplicationRunner implements AutoCloseable {
      */
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
         unregisterShutdownHook();
-        runtime.close();
+        try {
+            runtime.close();
+        } finally {
+            closeCloseHook();
+        }
     }
 
     private void unregisterShutdownHook() {
@@ -78,6 +101,17 @@ public final class RingloomApplicationRunner implements AutoCloseable {
             Runtime.getRuntime().removeShutdownHook(shutdownHook);
         } catch (IllegalStateException ignored) {
             // JVM shutdown is already in progress.
+        }
+    }
+
+    private void closeCloseHook() {
+        if (closeHook == null) {
+            return;
+        }
+        try {
+            closeHook.close();
+        } catch (Exception ex) {
+            throw new IllegalStateException("failed to close RingLoom application resource", ex);
         }
     }
 }

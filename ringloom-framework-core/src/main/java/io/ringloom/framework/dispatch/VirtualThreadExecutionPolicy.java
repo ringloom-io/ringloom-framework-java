@@ -52,7 +52,7 @@ public final class VirtualThreadExecutionPolicy implements MessageExecutionPolic
         }
         executor.execute(() -> {
             try {
-                MessageContext context = new MessageContext();
+                MessageContext context = new MessageContext(ingressContext.runtime());
                 context.updateCopied(
                         copy.correlationId,
                         copy.sourceNodeId,

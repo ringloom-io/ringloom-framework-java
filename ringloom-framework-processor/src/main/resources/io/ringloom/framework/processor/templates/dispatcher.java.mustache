@@ -6,6 +6,8 @@ import io.ringloom.framework.serialization.DecodeContext;
 import io.ringloom.framework.serialization.FlyweightDecoder;
 import io.ringloom.framework.serialization.MessageDecoder;
 import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.request.PendingRequest;
+import io.ringloom.framework.request.ResponseCallback;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import io.ringloom.service.RingloomMessage;
 
@@ -32,9 +34,50 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
 
   @Override
   public int onMessage(RingloomMessage message, MessageContext context) {
+    int responseStatus = resolvePendingResponse(context);
+    if (responseStatus != RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID) {
+      return responseStatus;
+    }
     return switch (context.templateId()) {
 {{{caseSources}}}      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
     };
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private int resolvePendingResponse(MessageContext context) {
+    if (context.runtime() == null) {
+      return RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
+    }
+    PendingRequest pending =
+        context.runtime().requestResponseRegistry().resolve(context.correlationId(), context.templateId());
+    if (pending == null) {
+      return RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
+    }
+    final Object decoded;
+    try {
+      decoded = pending.decodeResponse(context);
+    } catch (RuntimeException ex) {
+      return context.runtime()
+          .requestResponseRegistry()
+          .complete(
+              pending,
+              context.correlationId(),
+              context.templateId(),
+              RingloomHandlerStatus.SERIALIZATION_ERROR,
+              null);
+    }
+    int status = RingloomHandlerStatus.OK;
+    ResponseCallback callback = pending.callback();
+    if (callback != null) {
+      try {
+        status = callback.onResponse(decoded, context, pending.userContext());
+      } catch (RuntimeException ex) {
+        status = RingloomHandlerStatus.REQUEST_CANCELLED;
+      }
+    }
+    return context.runtime()
+        .requestResponseRegistry()
+        .complete(pending, context.correlationId(), context.templateId(), status, decoded);
   }
 
   private static <T> T component(java.util.Map<Class<?>, ?> components, Class<T> type) {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.dispatch;
 
+import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.PartitionedExecutionConfig;
 import io.ringloom.framework.config.WorkerBackpressurePolicy;
 import io.ringloom.framework.eventloop.IdleStrategy;
@@ -52,7 +53,7 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
         ingressContext.updateFrom(message);
         long key = extractor.partitionKey(message, ingressContext);
         Worker worker = workers[Math.floorMod(Long.hashCode(key), workers.length)];
-        Slot slot = worker.copy(message);
+        Slot slot = worker.copy(message, ingressContext.runtime());
         while (!closed.get()) {
             if (worker.offer(slot)) {
                 return 1;
@@ -95,13 +96,14 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
             this.idleStrategy = idleStrategy == null ? new NoOpIdleStrategy() : idleStrategy;
         }
 
-        Slot copy(RingloomMessage message) {
+        Slot copy(RingloomMessage message, RingloomRuntime runtime) {
             if (message.payloadLength() > maxPayloadBytes) {
                 throw new IllegalArgumentException("payload exceeds partitioned worker maxPayloadBytes");
             }
             byte[] payload = new byte[(int) message.payloadLength()];
             MemorySegment.copy(message.payloadSegment(), ValueLayout.JAVA_BYTE, 0, payload, 0, payload.length);
             return new Slot(
+                    runtime,
                     message.correlationId(),
                     message.sourceNodeId(),
                     message.sourceServiceId(),
@@ -134,6 +136,7 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                         slot.templateId,
                         slot.flags,
                         MemorySegment.ofArray(slot.payload));
+                context.runtime(slot.runtime);
                 dispatcher.onContextMessage(context);
                 idleStrategy.idle(1);
             }
@@ -155,6 +158,7 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
     }
 
     private record Slot(
+            RingloomRuntime runtime,
             long correlationId,
             short sourceNodeId,
             short sourceServiceId,

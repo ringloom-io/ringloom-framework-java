@@ -36,6 +36,30 @@ final class ForyMessageCodecTest {
     }
 
     @Test
+    void roundTripsGeneratedTypesWithRequiredRegistration() {
+        // Given
+        ForySerializerConfig config = new ForySerializerConfig(true, false, false, List.of(), 1024);
+        ForyMessageCodec<Object> codec = new ForyMessageCodec<>(
+                new ForySerializerModule().createFory(config, List.of(NestedMessage.class, NestedSide.class)),
+                Object.class,
+                config.maxPayloadBytes());
+        NestedMessage message = new NestedMessage(7, NestedSide.BUY);
+        EncodeContext encodeContext = new EncodeContext();
+        DecodeContext decodeContext = new DecodeContext();
+
+        // When
+        int length = codec.encodedLength(message, encodeContext);
+        try (Arena arena = Arena.ofConfined()) {
+            var segment = arena.allocate(length);
+            codec.encode(message, encodeContext.buffer().wrap(segment), encodeContext);
+            Object decoded = codec.decode(decodeContext.buffer().wrap(segment), decodeContext);
+
+            // Then
+            assertThat(decoded).isEqualTo(message);
+        }
+    }
+
+    @Test
     void failsWhenRegistrationIsRequiredAndTypeIsMissing() {
         // Given
         ForySerializerConfig config = new ForySerializerConfig(true, false, false, List.of(), 1024);
@@ -61,4 +85,11 @@ final class ForyMessageCodecTest {
     }
 
     public record SampleMessage(int id, String name) {}
+
+    public record NestedMessage(int id, NestedSide side) {}
+
+    public enum NestedSide {
+        BUY,
+        SELL
+    }
 }

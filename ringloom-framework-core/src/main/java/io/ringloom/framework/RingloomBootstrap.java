@@ -140,7 +140,7 @@ public final class RingloomBootstrap {
 
     private SerializerRegistry resolveSerializers(GeneratedRingloomApplication generated) {
         SerializerRegistry.Builder builder = SerializerRegistry.builder();
-        generated.registerSerializers(builder);
+        generated.registerSerializers(builder, config.serializers());
         serializers.registerInto(builder);
         return builder.build();
     }

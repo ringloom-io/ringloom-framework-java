@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import io.ringloom.framework.config.IdleStrategyKind;
+import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.eventloop.BackoffIdleStrategy;
 import io.ringloom.framework.eventloop.BusySpinIdleStrategy;
@@ -23,6 +24,7 @@ import io.ringloom.framework.tracing.ClientTraceContext;
 import io.ringloom.framework.tracing.NoopTraceAdapter;
 import io.ringloom.service.RingloomMessage;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 final class CoreFrameworkDefaultsTest {
@@ -95,6 +97,9 @@ final class CoreFrameworkDefaultsTest {
         assertThat(application.requiresCorrelationAwareSends()).isFalse();
         assertThatCode(() -> application.registerSerializers(SerializerRegistry.builder()))
                 .doesNotThrowAnyException();
+        assertThatCode(() -> application.registerSerializers(
+                        SerializerRegistry.builder(), new RingloomSerializerConfig("fory", java.util.Map.of())))
+                .doesNotThrowAnyException();
         assertThatCode(() -> application.initializeSerializers(SerializerRegistry.EMPTY))
                 .doesNotThrowAnyException();
         assertThatCode(() -> application.onRuntimeStarted(null)).doesNotThrowAnyException();
@@ -114,6 +119,23 @@ final class CoreFrameworkDefaultsTest {
         // Then
         verify(runtime).awaitShutdown();
         verify(runtime).close();
+    }
+
+    @Test
+    void applicationRunnerClosesHookOnce() {
+        // Given
+        RingloomRuntime runtime = mock(RingloomRuntime.class);
+        AtomicInteger closed = new AtomicInteger();
+        RingloomApplicationRunner application =
+                new RingloomApplicationRunner(runtime, false, "orders", closed::incrementAndGet);
+
+        // When
+        application.close();
+        application.close();
+
+        // Then
+        verify(runtime).close();
+        assertThat(closed.get()).isEqualTo(1);
     }
 
     @Test

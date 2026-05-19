@@ -1,8 +1,15 @@
 {{#packageName}}package {{packageName}};
 
 {{/packageName}}import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.dispatch.MessageContext;
+import io.ringloom.framework.request.PendingRequest;
+import io.ringloom.framework.request.RequestAwaiter;
+import io.ringloom.framework.request.RequestTimeout;
+import io.ringloom.framework.request.RingloomRequestException;
 import io.ringloom.framework.serialization.EncodeContext;
+import io.ringloom.framework.serialization.DecodeContext;
 import io.ringloom.framework.serialization.MessageEncoder;
+import io.ringloom.framework.serialization.MessageDecoder;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import io.ringloom.service.BufferClaim;
@@ -16,6 +23,7 @@ public final class {{generatedName}} implements {{simpleName}} {
   private final SerializerRegistry serializers;
   private final BufferClaim claim;
   private final EncodeContext encodeContext = new EncodeContext();
+  private final ThreadLocal<DecodeContext> decodeContexts = ThreadLocal.withInitial(DecodeContext::new);
 
   public {{generatedName}}(
       RingloomRuntime runtime,

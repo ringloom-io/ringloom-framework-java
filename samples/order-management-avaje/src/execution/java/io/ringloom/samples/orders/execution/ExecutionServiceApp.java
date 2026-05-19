@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.samples.orders.execution;
 
-import io.avaje.inject.BeanScope;
 import io.avaje.inject.Component;
 import io.avaje.inject.External;
 import io.ringloom.framework.RingloomApplicationRunner;
@@ -9,7 +8,7 @@ import io.ringloom.framework.annotation.RingloomApplication;
 import io.ringloom.framework.annotation.RingloomClient;
 import io.ringloom.framework.annotation.RingloomHandler;
 import io.ringloom.framework.annotation.RingloomRequest;
-import io.ringloom.samples.orders.common.AvajeRingloom;
+import io.ringloom.framework.ioc.avaje.AvajeRingloomBootstrap;
 import io.ringloom.samples.orders.common.ServiceNames;
 import io.ringloom.samples.orders.model.ExecutionReport;
 import io.ringloom.samples.orders.model.ExecutionStatus;
@@ -24,9 +23,10 @@ public final class ExecutionServiceApp {
     private static final Path DEFAULT_CONFIG = Path.of("samples/order-management-avaje/config/execution-service.yaml");
 
     public static void main(String[] args) throws Exception {
-        try (BeanScope scope = AvajeRingloom.start(DEFAULT_CONFIG)) {
+        try (RingloomApplicationRunner runner =
+                AvajeRingloomBootstrap.fromYaml(DEFAULT_CONFIG).start()) {
             System.out.printf("%s ready; press Ctrl+C to stop%n", ServiceNames.EXECUTION_SERVICE);
-            scope.get(RingloomApplicationRunner.class).awaitShutdown();
+            runner.awaitShutdown();
         }
     }
 }

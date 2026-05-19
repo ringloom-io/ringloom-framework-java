@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: pricing-terminal
+    storagePath: /tmp/ringloom-framework-pricing-requests-avaje/storage
+    group: pricing-requests-java-avaje
+  runtime:
+    messages:
+      execution:
+        mode: virtualThreads
+        virtualThreads:
+          maxInFlight: 128
+  serializers:
+    default: fory

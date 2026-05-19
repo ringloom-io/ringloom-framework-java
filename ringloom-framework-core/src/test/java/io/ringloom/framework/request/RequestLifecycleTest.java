@@ -68,7 +68,7 @@ final class RequestLifecycleTest {
         // When
         request.prepare(42L, 99, callback, "ctx", 123L, awaiter);
         request.markRegistered();
-        request.complete(RingloomHandlerStatus.OK);
+        request.complete(RingloomHandlerStatus.OK, "response");
 
         // Then
         assertThat(request.slot()).isEqualTo(3);
@@ -78,6 +78,7 @@ final class RequestLifecycleTest {
         assertThat(request.userContext()).isEqualTo("ctx");
         assertThat(request.deadlineNanos()).isEqualTo(123L);
         assertThat(request.completionStatus()).isEqualTo(RingloomHandlerStatus.OK);
+        assertThat(request.responseValue()).isEqualTo("response");
         assertThat(request.registered()).isFalse();
 
         // When
@@ -133,5 +134,31 @@ final class RequestLifecycleTest {
         assertThat(registry.acquire()).isNotNull();
         assertThat(registry.acquire()).isNotNull();
         assertThat(registry.acquire()).isNull();
+    }
+
+    @Test
+    void blockingRequestKeepsResponseUntilCallerReleasesSlot() {
+        // Given
+        PooledRequestResponseRegistry registry = new PooledRequestResponseRegistry(1);
+        PendingRequest request = registry.acquire();
+        RequestAwaiter awaiter = new RequestAwaiter();
+        awaiter.prepare(Thread.currentThread());
+        request.prepare(request.correlationId(), 7, null, null, 0, awaiter);
+        assertThat(registry.register(request)).isEqualTo(RingloomHandlerStatus.OK);
+
+        // When
+        int status = registry.complete(request, request.correlationId(), 7, RingloomHandlerStatus.OK, "quote");
+
+        // Then
+        assertThat(status).isEqualTo(RingloomHandlerStatus.OK);
+        assertThat(request.completionStatus()).isEqualTo(RingloomHandlerStatus.OK);
+        assertThat(request.responseValue()).isEqualTo("quote");
+        assertThat(registry.acquire()).isNull();
+
+        // When
+        registry.release(request);
+
+        // Then
+        assertThat(registry.acquire()).isNotNull();
     }
 }

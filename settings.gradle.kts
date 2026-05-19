@@ -23,4 +23,5 @@ include(
     "ringloom-ioc-avaje",
     "samples:order-management",
     "samples:order-management-avaje",
+    "samples:pricing-requests-avaje",
 )

@@ -13,7 +13,11 @@ public interface RequestResponseRegistry {
 
     void complete(PendingRequest request, int status);
 
-    void cancel(PendingRequest request, int status);
+    int complete(PendingRequest request, long correlationId, int responseTemplateId, int status, Object responseValue);
+
+    int cancel(PendingRequest request, int status);
+
+    void release(PendingRequest request);
 
     void completeAll(int status);
 }

@@ -4,6 +4,7 @@ package io.ringloom.framework.request;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import java.util.ArrayDeque;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -58,41 +59,79 @@ public final class PooledRequestResponseRegistry implements RequestResponseRegis
         if (request == null || request.expectedResponseTemplateId() != responseTemplateId) {
             return null;
         }
-        byCorrelationId.remove(correlationId);
         return request;
     }
 
     @Override
     public synchronized void complete(PendingRequest request, int status) {
-        if (request == null) {
-            return;
-        }
-        byCorrelationId.remove(request.correlationId());
-        request.complete(status);
-        release(request);
+        complete(
+                request,
+                request == null ? 0 : request.correlationId(),
+                request == null ? -1 : request.expectedResponseTemplateId(),
+                status,
+                null);
     }
 
     @Override
-    public synchronized void cancel(PendingRequest request, int status) {
+    public synchronized int complete(
+            PendingRequest request, long correlationId, int responseTemplateId, int status, Object responseValue) {
         if (request == null) {
+            return RingloomHandlerStatus.REQUEST_CANCELLED;
+        }
+        PendingRequest registered = byCorrelationId.get(correlationId);
+        if (registered != request || request.expectedResponseTemplateId() != responseTemplateId) {
+            int completionStatus = request.completionStatus();
+            return completionStatus == 0 ? RingloomHandlerStatus.REQUEST_CANCELLED : completionStatus;
+        }
+        byCorrelationId.remove(correlationId);
+        request.complete(status, responseValue);
+        if (request.awaiter() == null) {
+            release(request);
+        }
+        return status;
+    }
+
+    @Override
+    public synchronized int cancel(PendingRequest request, int status) {
+        if (request == null) {
+            return RingloomHandlerStatus.REQUEST_CANCELLED;
+        }
+        if (!request.registered()) {
+            return request.completionStatus();
+        }
+        byCorrelationId.remove(request.correlationId());
+        request.complete(status, null);
+        if (request.awaiter() == null) {
+            release(request);
+        }
+        return status;
+    }
+
+    @Override
+    public synchronized void release(PendingRequest request) {
+        if (request == null
+                || (!request.registered()
+                        && request.correlationId() == 0
+                        && request.expectedResponseTemplateId() == -1)) {
             return;
         }
         byCorrelationId.remove(request.correlationId());
-        request.complete(status);
-        release(request);
+        releaseSlot(request);
     }
 
     @Override
     public synchronized void completeAll(int status) {
-        for (PendingRequest request : byCorrelationId.values()) {
-            request.complete(status);
-            request.clear();
-            free.addLast(request);
+        for (PendingRequest request : List.copyOf(byCorrelationId.values())) {
+            byCorrelationId.remove(request.correlationId());
+            request.complete(status, null);
+            if (request.awaiter() == null) {
+                releaseSlot(request);
+            }
         }
         byCorrelationId.clear();
     }
 
-    private void release(PendingRequest request) {
+    private void releaseSlot(PendingRequest request) {
         request.clear();
         free.addLast(request);
     }

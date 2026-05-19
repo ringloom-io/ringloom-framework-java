@@ -2,6 +2,7 @@
 package io.ringloom.framework.generated;
 
 import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +57,17 @@ public interface GeneratedRingloomApplication {
      * @param builder the serializer registry builder to contribute to
      */
     default void registerSerializers(SerializerRegistry.Builder builder) {}
+
+    /**
+     * Registers generated serializers into the supplied builder with access to runtime serializer
+     * configuration.
+     *
+     * @param builder the serializer registry builder to contribute to
+     * @param serializers the serializer runtime configuration
+     */
+    default void registerSerializers(SerializerRegistry.Builder builder, RingloomSerializerConfig serializers) {
+        registerSerializers(builder);
+    }
 
     /**
      * Supplies the runtime serializer registry to generated dispatchers that decode inbound payloads.

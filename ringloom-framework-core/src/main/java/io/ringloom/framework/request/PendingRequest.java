@@ -14,6 +14,8 @@ public final class PendingRequest {
     private long deadlineNanos;
     private RequestAwaiter awaiter;
     private int completionStatus;
+    private Object responseValue;
+    private ResponseDecoder<?> responseDecoder;
     private boolean registered;
 
     PendingRequest(int slot) {
@@ -56,6 +58,10 @@ public final class PendingRequest {
         return completionStatus;
     }
 
+    public Object responseValue() {
+        return responseValue;
+    }
+
     public boolean registered() {
         return registered;
     }
@@ -67,6 +73,17 @@ public final class PendingRequest {
             Object userContext,
             long deadlineNanos,
             RequestAwaiter awaiter) {
+        return prepare(correlationId, expectedResponseTemplateId, callback, userContext, deadlineNanos, awaiter, null);
+    }
+
+    public PendingRequest prepare(
+            long correlationId,
+            int expectedResponseTemplateId,
+            ResponseCallback<?> callback,
+            Object userContext,
+            long deadlineNanos,
+            RequestAwaiter awaiter,
+            ResponseDecoder<?> responseDecoder) {
         this.correlationId = correlationId;
         this.expectedResponseTemplateId = expectedResponseTemplateId;
         this.callback = callback;
@@ -74,16 +91,26 @@ public final class PendingRequest {
         this.deadlineNanos = deadlineNanos;
         this.awaiter = awaiter;
         this.completionStatus = 0;
+        this.responseValue = null;
+        this.responseDecoder = responseDecoder;
         this.registered = false;
         return this;
+    }
+
+    public Object decodeResponse(io.ringloom.framework.dispatch.MessageContext context) {
+        if (responseDecoder == null) {
+            return context.payloadSegment();
+        }
+        return responseDecoder.decode(context);
     }
 
     void markRegistered() {
         registered = true;
     }
 
-    void complete(int status) {
+    void complete(int status, Object responseValue) {
         completionStatus = status;
+        this.responseValue = responseValue;
         registered = false;
         RequestAwaiter requestAwaiter = awaiter;
         if (requestAwaiter != null) {
@@ -100,6 +127,8 @@ public final class PendingRequest {
         deadlineNanos = 0;
         awaiter = null;
         completionStatus = 0;
+        responseValue = null;
+        responseDecoder = null;
         registered = false;
     }
 }

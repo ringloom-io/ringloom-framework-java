@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.processor;
 
+import io.ringloom.framework.annotation.RequestMode;
 import io.ringloom.framework.annotation.RingloomApplication;
 import io.ringloom.framework.annotation.RingloomClient;
 import io.ringloom.framework.annotation.RingloomHandler;
 import io.ringloom.framework.annotation.RingloomRequest;
 import io.ringloom.framework.annotation.RingloomServiceComponent;
+import io.ringloom.framework.annotation.RoutingMode;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.RoundEnvironment;
@@ -25,8 +29,13 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
+import javax.lang.model.element.RecordComponentElement;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
@@ -42,7 +51,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
     private static final String MEMORY_SEGMENT = "java.lang.foreign.MemorySegment";
     private static final String RINGLOOM_MESSAGE = "io.ringloom.service.RingloomMessage";
     private static final String MESSAGE_CONTEXT = "io.ringloom.framework.dispatch.MessageContext";
+    private static final String REQUEST_TIMEOUT = "io.ringloom.framework.request.RequestTimeout";
+    private static final String RINGLOOM_REQUEST_EXCEPTION = "io.ringloom.framework.request.RingloomRequestException";
+    private static final String INTERRUPTED_EXCEPTION = "java.lang.InterruptedException";
     private static final String SBE_SERIALIZER = "sbe";
+    private static final String FORY_SERIALIZER = "fory";
 
     private final TemplateRenderer templates = new TemplateRenderer();
     private boolean generated;
@@ -114,20 +127,61 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             if (request.responseTemplateId() != -1) {
                 validateTemplate(method, request.responseTemplateId());
             }
+            if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {
+                validateVirtualThreadBlockingClientMethod(method, request, elements);
+                continue;
+            }
+            if (request.mode() == RequestMode.CALLBACK) {
+                error(method, "callback request/response client methods are not implemented yet");
+                continue;
+            }
             if (!returnsInt(method)) {
-                error(method, "currently supported generated client shape must return int status");
+                error(method, "one-way generated client methods must return int status");
                 continue;
             }
-            if (!isSingleParameter(method)) {
-                error(method, "currently supported generated client shape is int method(payload)");
+            if (request.routing() == RoutingMode.DIRECT) {
+                if (!isDirectReplyMethod(method)) {
+                    error(method, "direct generated client shape is int method(payload, MessageContext)");
+                    continue;
+                }
+            } else if (!isSingleParameter(method)) {
+                error(method, "one-way generated client shape is int method(payload)");
                 continue;
             }
-            if (!isMemorySegmentOnly(method)
+            if (!isMemorySegmentPayload(clientPayloadParameter(method))
                     && usesSbeSerializer(
                             request.serializer(),
-                            method.getParameters().getFirst().asType().toString())) {
-                validateSbeClientPayload(method.getParameters().getFirst(), elements);
+                            clientPayloadParameter(method).asType().toString())) {
+                validateSbeClientPayload(clientPayloadParameter(method), elements);
             }
+        }
+    }
+
+    private void validateVirtualThreadBlockingClientMethod(
+            ExecutableElement method, RingloomRequest request, Elements elements) {
+        if (request.responseTemplateId() == -1) {
+            error(method, "virtual-thread blocking requests require responseTemplateId");
+            return;
+        }
+        if (method.getReturnType().toString().equals("void") || returnsInt(method)) {
+            error(method, "virtual-thread blocking requests must return the decoded response type");
+            return;
+        }
+        if (method.getParameters().size() != 2
+                || !method.getParameters().get(1).asType().toString().equals(REQUEST_TIMEOUT)) {
+            error(method, "virtual-thread blocking shape is Response method(payload, RequestTimeout)");
+            return;
+        }
+        if (!throwsType(method, RINGLOOM_REQUEST_EXCEPTION) || !throwsType(method, INTERRUPTED_EXCEPTION)) {
+            error(
+                    method,
+                    "virtual-thread blocking requests must declare RingloomRequestException and InterruptedException");
+            return;
+        }
+        VariableElement payload = method.getParameters().getFirst();
+        if (!isMemorySegmentPayload(payload)
+                && usesSbeSerializer(request.serializer(), payload.asType().toString())) {
+            validateSbeClientPayload(payload, elements);
         }
     }
 
@@ -164,18 +218,35 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private String clientMethodSource(ExecutableElement method) throws IOException {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
-        String payloadType = method.getParameters().getFirst().asType().toString();
+        VariableElement payload = clientPayloadParameter(method);
+        String payloadType = payload.asType().toString();
         Map<String, Object> model = Map.of(
                 "methodName",
                 method.getSimpleName().toString(),
                 "payloadType",
                 payloadType,
                 "payloadName",
-                method.getParameters().getFirst().getSimpleName().toString(),
+                payload.getSimpleName().toString(),
                 "templateId",
                 request.templateId(),
+                "responseTemplateId",
+                request.responseTemplateId(),
+                "responseType",
+                method.getReturnType().toString(),
                 "serializer",
                 escape(request.serializer()));
+        if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {
+            if (payloadType.equals(MEMORY_SEGMENT)) {
+                return templates.render("client-memory-blocking-method.java.mustache", model);
+            }
+            return templates.render("client-serializer-blocking-method.java.mustache", model);
+        }
+        if (request.routing() == RoutingMode.DIRECT) {
+            if (payloadType.equals(MEMORY_SEGMENT)) {
+                return templates.render("client-memory-direct-method.java.mustache", model);
+            }
+            return templates.render("client-serializer-direct-method.java.mustache", model);
+        }
         if (payloadType.equals(MEMORY_SEGMENT)) {
             return templates.render("client-memory-method.java.mustache", model);
         }
@@ -377,6 +448,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private String serializerRegistrationSources(List<TypeElement> clients, List<Handler> handlers, Elements elements) {
         Map<String, String> registrations = new LinkedHashMap<>();
+        Set<String> explicitForyTypes = new TreeSet<>();
+        Set<String> defaultForyTypes = new TreeSet<>();
         for (TypeElement client : clients) {
             for (Element enclosed : client.getEnclosedElements()) {
                 if (!(enclosed instanceof ExecutableElement method)) {
@@ -389,7 +462,10 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 if (isMemorySegmentOnly(method)) {
                     continue;
                 }
-                String payloadType = method.getParameters().getFirst().asType().toString();
+                VariableElement payloadParameter = clientPayloadParameter(method);
+                String payloadType = payloadParameter.asType().toString();
+                collectForyClientTypes(
+                        method, request, payloadParameter, explicitForyTypes, defaultForyTypes, elements);
                 if (!usesSbeSerializer(request.serializer(), payloadType)) {
                     continue;
                 }
@@ -408,6 +484,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 continue;
             }
             String payloadType = payloadParameter.asType().toString();
+            collectForyTypes(
+                    annotation.serializer(), payloadParameter.asType(), explicitForyTypes, defaultForyTypes, elements);
             if (!usesSbeSerializer(annotation.serializer(), payloadType)) {
                 continue;
             }
@@ -419,7 +497,101 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         for (String source : registrations.values()) {
             out.append(source);
         }
+        out.append(foryRegistrationSource(explicitForyTypes, defaultForyTypes));
         return out.toString();
+    }
+
+    private void collectForyClientTypes(
+            ExecutableElement method,
+            RingloomRequest request,
+            VariableElement payloadParameter,
+            Set<String> explicitForyTypes,
+            Set<String> defaultForyTypes,
+            Elements elements) {
+        collectForyTypes(
+                request.serializer(), payloadParameter.asType(), explicitForyTypes, defaultForyTypes, elements);
+        if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {
+            collectForyTypes(
+                    request.serializer(), method.getReturnType(), explicitForyTypes, defaultForyTypes, elements);
+        }
+    }
+
+    private void collectForyTypes(
+            String serializer,
+            TypeMirror type,
+            Set<String> explicitForyTypes,
+            Set<String> defaultForyTypes,
+            Elements elements) {
+        if (serializer.equals(FORY_SERIALIZER)) {
+            collectForyTypeGraph(type, explicitForyTypes, elements);
+            return;
+        }
+        if (serializer.isBlank() && !usesSbeSerializer(serializer, type.toString())) {
+            collectForyTypeGraph(type, defaultForyTypes, elements);
+        }
+    }
+
+    private void collectForyTypeGraph(TypeMirror type, Set<String> result, Elements elements) {
+        TypeKind kind = type.getKind();
+        if (kind.isPrimitive()
+                || kind == TypeKind.VOID
+                || kind == TypeKind.NULL
+                || kind == TypeKind.NONE
+                || kind == TypeKind.WILDCARD) {
+            return;
+        }
+        if (type instanceof ArrayType arrayType) {
+            collectForyTypeGraph(arrayType.getComponentType(), result, elements);
+            return;
+        }
+        if (!(type instanceof DeclaredType declaredType)
+                || !(declaredType.asElement() instanceof TypeElement typeElement)) {
+            return;
+        }
+        String typeName = typeElement.getQualifiedName().toString();
+        for (TypeMirror argument : declaredType.getTypeArguments()) {
+            collectForyTypeGraph(argument, result, elements);
+        }
+        if (typeName.startsWith("java.")) {
+            return;
+        }
+        result.add(typeName);
+        if (typeElement.getKind() == ElementKind.RECORD) {
+            for (RecordComponentElement component : typeElement.getRecordComponents()) {
+                collectForyTypeGraph(component.asType(), result, elements);
+            }
+        }
+    }
+
+    private String foryRegistrationSource(Set<String> explicitForyTypes, Set<String> defaultForyTypes) {
+        Set<String> allTypes = new LinkedHashSet<>();
+        allTypes.addAll(explicitForyTypes);
+        allTypes.addAll(defaultForyTypes);
+        if (allTypes.isEmpty()) {
+            return "";
+        }
+        StringBuilder source = new StringBuilder();
+        source.append("    java.util.LinkedHashSet<Class<?>> foryTypes = new java.util.LinkedHashSet<>();\n");
+        for (String type : explicitForyTypes) {
+            source.append("    foryTypes.add(").append(type).append(".class);\n");
+        }
+        if (!defaultForyTypes.isEmpty()) {
+            source.append("    if (\"fory\".equals(serializers.defaultSerializer())) {\n");
+            for (String type : defaultForyTypes) {
+                source.append("      foryTypes.add(").append(type).append(".class);\n");
+            }
+            source.append("    }\n");
+        }
+        source.append("""
+                    if (!foryTypes.isEmpty()) {
+                      new io.ringloom.framework.serializer.fory.ForySerializerModule()
+                          .register(
+                              builder,
+                              io.ringloom.framework.serializer.fory.ForySerializerConfig.from(serializers.entry("fory")),
+                              java.util.List.copyOf(foryTypes));
+                    }
+            """);
+        return source.toString();
     }
 
     private String sbeClientRegistrationSource(
@@ -618,12 +790,34 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 && method.getParameters().getFirst().asType().toString().equals(MEMORY_SEGMENT));
     }
 
+    private boolean isMemorySegmentPayload(VariableElement parameter) {
+        return parameter.asType().toString().equals(MEMORY_SEGMENT);
+    }
+
     private boolean isSingleParameter(ExecutableElement method) {
         return method.getParameters().size() == 1;
     }
 
+    private boolean isDirectReplyMethod(ExecutableElement method) {
+        return method.getParameters().size() == 2
+                && method.getParameters().get(1).asType().toString().equals(MESSAGE_CONTEXT);
+    }
+
+    private VariableElement clientPayloadParameter(ExecutableElement method) {
+        return method.getParameters().getFirst();
+    }
+
     private boolean returnsInt(ExecutableElement method) {
         return method.getReturnType().toString().equals("int");
+    }
+
+    private boolean throwsType(ExecutableElement method, String typeName) {
+        for (var thrownType : method.getThrownTypes()) {
+            if (thrownType.toString().equals(typeName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private VariableElement serializerPayloadParameter(ExecutableElement method) {
