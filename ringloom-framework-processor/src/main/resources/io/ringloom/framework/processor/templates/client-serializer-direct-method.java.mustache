@@ -2,36 +2,35 @@
   @Override
   public int {{methodName}}({{{payloadType}}} {{payloadName}}, MessageContext replyTo) {
     java.util.Objects.requireNonNull(replyTo, "replyTo");
-    EncodeContext requestEncodeContext = new EncodeContext();
     String serializerName = runtime.resolveSerializerName("{{serializer}}");
     MessageEncoder<{{{payloadType}}}> encoder =
         serializers.encoder(serializerName, {{{payloadType}}}.class);
     if (encoder == null) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
+    EncodeContext requestEncodeContext = encodeContexts.get();
+    BufferClaim replyClaim = claims.get();
     final int payloadLength;
     try {
       payloadLength = encoder.encodedLength({{payloadName}}, requestEncodeContext);
     } catch (RuntimeException ex) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
-    try (BufferClaim replyClaim = lowLevelClient.newClaim()) {
-      int status = lowLevelClient.tryClaimToRequest(
-          replyTo.sourceNodeId(),
-          replyTo.sourceServiceId(),
-          {{templateId}},
-          replyTo.correlationId(),
-          payloadLength,
-          replyClaim);
-      if (status != RingloomStatus.OK) {
-        return status;
-      }
-      try {
-        encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(replyClaim.payloadSegment()), requestEncodeContext);
-        return replyClaim.commit();
-      } catch (RuntimeException ex) {
-        replyClaim.abort();
-        return RingloomHandlerStatus.SERIALIZATION_ERROR;
-      }
+    int status = lowLevelClient.tryClaimToRequest(
+        replyTo.sourceNodeId(),
+        replyTo.sourceServiceId(),
+        {{templateId}},
+        replyTo.correlationId(),
+        payloadLength,
+        replyClaim);
+    if (status != RingloomStatus.OK) {
+      return status;
+    }
+    try {
+      encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(replyClaim.payloadSegment()), requestEncodeContext);
+      return replyClaim.commit();
+    } catch (RuntimeException ex) {
+      replyClaim.abort();
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
   }

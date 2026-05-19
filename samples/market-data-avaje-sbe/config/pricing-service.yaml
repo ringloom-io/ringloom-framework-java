@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: market-pricing
+    storagePath: /tmp/ringloom-framework-market-data-avaje-sbe/storage
+    group: market-data-java-avaje
+  runtime:
+    messages:
+      execution:
+        mode: partitionedWorkers
+        partitioned:
+          workers: 2
+          queueCapacity: 1024
+          maxPayloadBytes: 16
+  serializers:
+    default: sbe

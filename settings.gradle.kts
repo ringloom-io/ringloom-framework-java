@@ -23,5 +23,6 @@ include(
     "ringloom-ioc-avaje",
     "samples:order-management",
     "samples:order-management-avaje",
+    "samples:market-data-avaje-sbe",
     "samples:pricing-requests-avaje",
 )

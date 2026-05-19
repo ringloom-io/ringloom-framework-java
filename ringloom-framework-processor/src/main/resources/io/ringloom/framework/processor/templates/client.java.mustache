@@ -21,8 +21,8 @@ public final class {{generatedName}} implements {{simpleName}} {
   private final RingloomRuntime runtime;
   private final io.ringloom.service.RingloomClient lowLevelClient;
   private final SerializerRegistry serializers;
-  private final BufferClaim claim;
-  private final EncodeContext encodeContext = new EncodeContext();
+  private final ThreadLocal<BufferClaim> claims;
+  private final ThreadLocal<EncodeContext> encodeContexts = ThreadLocal.withInitial(EncodeContext::new);
   private final ThreadLocal<DecodeContext> decodeContexts = ThreadLocal.withInitial(DecodeContext::new);
 
   public {{generatedName}}(
@@ -32,7 +32,7 @@ public final class {{generatedName}} implements {{simpleName}} {
     this.runtime = java.util.Objects.requireNonNull(runtime, "runtime");
     this.lowLevelClient = java.util.Objects.requireNonNull(lowLevelClient, "lowLevelClient");
     this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
-    this.claim = lowLevelClient.newClaim();
+    this.claims = ThreadLocal.withInitial(lowLevelClient::newClaim);
   }
 {{{methodSources}}}
 }

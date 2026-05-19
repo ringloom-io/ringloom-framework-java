@@ -114,6 +114,7 @@ final class RingloomFrameworkProcessorTest {
                     public final class OrderDto {
                       public int computeEncodedLength() { return 8; }
                       public static void encodeWith(OrderEncoder encoder, OrderDto dto) {}
+                      public static void decodeWith(OrderDecoder decoder, OrderDto dto) {}
                     }
                     """),
                         source("test.OrderEncoder", """
@@ -132,27 +133,35 @@ final class RingloomFrameworkProcessorTest {
                       public static final int BLOCK_LENGTH = 8;
                       public static final int SCHEMA_VERSION = 1;
                       public OrderDecoder wrap(DirectBuffer buffer, int offset, int blockLength, int version) { return this; }
+                      public long accountId() { return 42L; }
                     }
                     """),
                         source("test.OrderClient", """
                     package test;
                     import io.ringloom.framework.annotation.RingloomClient;
                     import io.ringloom.framework.annotation.RingloomRequest;
+                    import io.ringloom.framework.annotation.RequestMode;
+                    import io.ringloom.framework.request.RequestTimeout;
+                    import io.ringloom.framework.request.RingloomRequestException;
                     @RingloomClient(service = "gateway")
                     public interface OrderClient {
                       @RingloomRequest(templateId = 101)
                       int send(OrderDto payload);
+                      @RingloomRequest(templateId = 101, responseTemplateId = 102, mode = RequestMode.VIRTUAL_THREAD_BLOCKING)
+                      OrderDto request(OrderDto payload, RequestTimeout timeout)
+                          throws RingloomRequestException, InterruptedException;
                     }
                     """),
                         source("test.Handlers", """
                     package test;
                     import io.ringloom.framework.annotation.RingloomHandler;
+                    import io.ringloom.framework.annotation.RingloomPartitionKey;
                     import io.ringloom.framework.annotation.RingloomServiceComponent;
                     import io.ringloom.framework.dispatch.MessageContext;
                     @RingloomServiceComponent
                     public final class Handlers {
                       @RingloomHandler(templateId = 102)
-                      public int onMessage(OrderDecoder payload, MessageContext context) { return 0; }
+                      public int onMessage(@RingloomPartitionKey("accountId") OrderDecoder payload, MessageContext context) { return 0; }
                     }
                     """)));
 
@@ -165,7 +174,12 @@ final class RingloomFrameworkProcessorTest {
                 .contains("test.OrderDto.class")
                 .contains("test.OrderEncoder")
                 .contains("builder.flyweight(")
-                .contains("test.OrderDecoder.class");
+                .contains("test.OrderDecoder.class")
+                .contains("partitionKeyExtractors()")
+                .contains("return decoded.accountId()");
+        assertThat(Files.readString(generated.resolve("test/OrderClient_RingloomClient.java")))
+                .contains("ThreadLocal<test.OrderDto> requestResponses")
+                .contains("test.OrderDto.decodeWith(decoder, response)");
     }
 
     @Test

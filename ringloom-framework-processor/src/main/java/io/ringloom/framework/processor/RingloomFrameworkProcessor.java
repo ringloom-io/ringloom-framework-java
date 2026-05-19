@@ -5,6 +5,7 @@ import io.ringloom.framework.annotation.RequestMode;
 import io.ringloom.framework.annotation.RingloomApplication;
 import io.ringloom.framework.annotation.RingloomClient;
 import io.ringloom.framework.annotation.RingloomHandler;
+import io.ringloom.framework.annotation.RingloomPartitionKey;
 import io.ringloom.framework.annotation.RingloomRequest;
 import io.ringloom.framework.annotation.RingloomServiceComponent;
 import io.ringloom.framework.annotation.RoutingMode;
@@ -67,7 +68,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 RingloomClient.class.getCanonicalName(),
                 RingloomRequest.class.getCanonicalName(),
                 RingloomServiceComponent.class.getCanonicalName(),
-                RingloomHandler.class.getCanonicalName());
+                RingloomHandler.class.getCanonicalName(),
+                RingloomPartitionKey.class.getCanonicalName());
     }
 
     @Override
@@ -182,6 +184,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         if (!isMemorySegmentPayload(payload)
                 && usesSbeSerializer(request.serializer(), payload.asType().toString())) {
             validateSbeClientPayload(payload, elements);
+            requireSbeDtoPayload(method.getReturnType().toString(), method, elements);
         }
     }
 
@@ -194,7 +197,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             StringBuilder methods = new StringBuilder();
             for (Element enclosed : client.getEnclosedElements()) {
                 if (enclosed.getKind() == ElementKind.METHOD) {
-                    methods.append(clientMethodSource((ExecutableElement) enclosed));
+                    methods.append(clientMethodSource((ExecutableElement) enclosed, elements));
                 }
             }
             writeSourceFile(
@@ -216,7 +219,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
-    private String clientMethodSource(ExecutableElement method) throws IOException {
+    private String clientMethodSource(ExecutableElement method, Elements elements) throws IOException {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
         VariableElement payload = clientPayloadParameter(method);
         String payloadType = payload.asType().toString();
@@ -238,6 +241,14 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {
             if (payloadType.equals(MEMORY_SEGMENT)) {
                 return templates.render("client-memory-blocking-method.java.mustache", model);
+            }
+            if (usesSbeSerializer(request.serializer(), payloadType)
+                    && sbePayloadModel(method.getReturnType().toString()) != null) {
+                SbePayloadModel response =
+                        requireSbeDtoPayload(method.getReturnType().toString(), method, elements);
+                Map<String, Object> sbeModel = new HashMap<>(model);
+                sbeModel.put("responseDecoderType", response.decoderType());
+                return templates.render("client-sbe-blocking-method.java.mustache", sbeModel);
             }
             return templates.render("client-serializer-blocking-method.java.mustache", model);
         }
@@ -272,7 +283,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     error(method, "duplicate RingLoom handler template id " + annotation.templateId());
                 }
                 validateHandler(method, elements);
-                handlers.add(new Handler(component, method, annotation.templateId()));
+                handlers.add(new Handler(component, method, annotation.templateId(), partitionKey(method)));
             }
         }
         handlers.sort(Comparator.comparingInt(Handler::templateId));
@@ -440,7 +451,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                                     "componentTypeSources",
                                     componentTypeSources(handlers),
                                     "serializerRegistrationSources",
-                                    serializerRegistrationSources(clients, handlers, elements))));
+                                    serializerRegistrationSources(clients, handlers, elements),
+                                    "partitionKeyExtractorSources",
+                                    partitionKeyExtractorSources(handlers, elements))));
         } catch (IOException ex) {
             error(origin, "failed to generate application: " + ex.getMessage());
         }
@@ -733,6 +746,62 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
+    private PartitionKey partitionKey(ExecutableElement method) {
+        RingloomPartitionKey methodKey = method.getAnnotation(RingloomPartitionKey.class);
+        VariableElement annotatedParameter = null;
+        RingloomPartitionKey parameterKey = null;
+        for (VariableElement parameter : method.getParameters()) {
+            RingloomPartitionKey key = parameter.getAnnotation(RingloomPartitionKey.class);
+            if (key == null) {
+                continue;
+            }
+            if (parameterKey != null || methodKey != null) {
+                error(parameter, "RingLoom handler may declare only one @RingloomPartitionKey");
+                return null;
+            }
+            annotatedParameter = parameter;
+            parameterKey = key;
+        }
+        if (methodKey == null && parameterKey == null) {
+            return null;
+        }
+        VariableElement parameter =
+                annotatedParameter == null ? serializerPayloadParameter(method) : annotatedParameter;
+        if (parameter == null) {
+            error(method, "@RingloomPartitionKey requires a payload, RingloomMessage, or MessageContext parameter");
+            return null;
+        }
+        String type = parameter.asType().toString();
+        if (type.equals(MEMORY_SEGMENT)) {
+            error(parameter, "MemorySegment parameters cannot be used as generated partition keys");
+            return null;
+        }
+        if (type.equals(RINGLOOM_MESSAGE) || type.equals(MESSAGE_CONTEXT)) {
+            return new PartitionKey(parameter, "");
+        }
+        RingloomPartitionKey annotation = parameterKey == null ? methodKey : parameterKey;
+        String accessor = annotation.value().isBlank() ? "partitionKey" : annotation.value();
+        if (!hasNoArgMethod(parameter.asType(), accessor)) {
+            error(parameter, "partition key payload type must declare no-argument accessor " + accessor + "()");
+        }
+        return new PartitionKey(parameter, accessor);
+    }
+
+    private boolean hasNoArgMethod(TypeMirror type, String methodName) {
+        if (!(type instanceof DeclaredType declaredType)
+                || !(declaredType.asElement() instanceof TypeElement typeElement)) {
+            return false;
+        }
+        for (Element enclosed : typeElement.getEnclosedElements()) {
+            if (enclosed instanceof ExecutableElement method
+                    && method.getSimpleName().contentEquals(methodName)
+                    && method.getParameters().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void validateSbeClientPayload(VariableElement parameter, Elements elements) {
         requireSbeDtoPayload(parameter.asType().toString(), parameter, elements);
     }
@@ -834,6 +903,99 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return (type.equals(RINGLOOM_MESSAGE) || type.equals(MESSAGE_CONTEXT) || type.equals(MEMORY_SEGMENT));
     }
 
+    private String partitionKeyExtractorSources(List<Handler> handlers, Elements elements) {
+        StringBuilder entries = new StringBuilder();
+        StringBuilder methods = new StringBuilder();
+        int index = 0;
+        for (Handler handler : handlers) {
+            if (handler.partitionKey() == null) {
+                continue;
+            }
+            if (index > 0) {
+                entries.append(",\n");
+            }
+            String methodName = "partitionKey" + handler.templateId();
+            entries.append("        ")
+                    .append(handler.templateId())
+                    .append(", this::")
+                    .append(methodName);
+            methods.append(partitionKeyMethodSource(methodName, handler, elements));
+            index++;
+        }
+        if (index == 0) {
+            return "";
+        }
+        return """
+
+              @Override
+              public java.util.Map<Integer, io.ringloom.framework.generated.GeneratedPartitionKeyExtractor> partitionKeyExtractors() {
+                return java.util.Map.of(
+            %s);
+              }
+            %s""".formatted(entries, methods);
+    }
+
+    private String partitionKeyMethodSource(String methodName, Handler handler, Elements elements) {
+        PartitionKey partitionKey = handler.partitionKey();
+        VariableElement parameter = partitionKey.parameter();
+        String type = parameter.asType().toString();
+        if (type.equals(RINGLOOM_MESSAGE)) {
+            return """
+
+                  private long %s(io.ringloom.service.RingloomMessage message, io.ringloom.framework.dispatch.MessageContext context) {
+                    return message.correlationId();
+                  }
+                """.formatted(methodName);
+        }
+        if (type.equals(MESSAGE_CONTEXT)) {
+            return """
+
+                  private long %s(io.ringloom.service.RingloomMessage message, io.ringloom.framework.dispatch.MessageContext context) {
+                    return context.correlationId();
+                  }
+                """.formatted(methodName);
+        }
+        RingloomHandler annotation = handler.method().getAnnotation(RingloomHandler.class);
+        requireSbePayload(type, parameter, elements);
+        return """
+
+              private long %s(io.ringloom.service.RingloomMessage message, io.ringloom.framework.dispatch.MessageContext context) {
+                DecodeContext decodeContext = partitionDecodeContexts.get();
+                String serializerName = context.runtime() == null
+                    ? "%s"
+                    : context.runtime().resolveSerializerName("%s");
+                FlyweightDecoder<%s> flyweight =
+                    serializers.flyweight(serializerName, %s.class);
+                final %s decoded;
+                try {
+                  if (flyweight != null) {
+                    decoded = flyweight.wrap(context.payloadSegment(), decodeContext);
+                  } else {
+                    MessageDecoder<%s> decoder =
+                        serializers.decoder(serializerName, %s.class);
+                    if (decoder == null) {
+                      throw new IllegalStateException("missing partition-key decoder for " + serializerName);
+                    }
+                    decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);
+                  }
+                } catch (RuntimeException ex) {
+                  throw new IllegalStateException("failed to decode partition key for template %d", ex);
+                }
+                return decoded.%s();
+              }
+            """.formatted(
+                        methodName,
+                        escape(annotation.serializer()),
+                        escape(annotation.serializer()),
+                        type,
+                        type,
+                        type,
+                        type,
+                        type,
+                        handler.templateId(),
+                        partitionKey.accessor());
+    }
+
     private void validateTemplate(Element element, int templateId) {
         if (templateId < 0 || templateId > 65_535) {
             error(element, "template id must be in unsigned 16-bit range: " + templateId);
@@ -903,7 +1065,10 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, message, element);
     }
 
-    private record Handler(TypeElement component, ExecutableElement method, int templateId) {}
+    private record Handler(
+            TypeElement component, ExecutableElement method, int templateId, PartitionKey partitionKey) {}
+
+    private record PartitionKey(VariableElement parameter, String accessor) {}
 
     private record SbePayloadModel(
             String dtoType, String encoderType, String decoderType, boolean dtoPayload, boolean decoderPayload) {}

@@ -3,25 +3,24 @@
   public int {{methodName}}({{{payloadType}}} {{payloadName}}, MessageContext replyTo) {
     java.util.Objects.requireNonNull(replyTo, "replyTo");
     MemorySegment segment = {{payloadName}} == null ? MemorySegment.NULL : {{payloadName}};
-    try (BufferClaim replyClaim = lowLevelClient.newClaim()) {
-      int status = lowLevelClient.tryClaimToRequest(
-          replyTo.sourceNodeId(),
-          replyTo.sourceServiceId(),
-          {{templateId}},
-          replyTo.correlationId(),
-          segment.byteSize(),
-          replyClaim);
-      if (status != RingloomStatus.OK) {
-        return status;
-      }
-      MemorySegment.copy(
-          segment,
-          ValueLayout.JAVA_BYTE,
-          0,
-          replyClaim.payloadSegment(),
-          ValueLayout.JAVA_BYTE,
-          0,
-          segment.byteSize());
-      return replyClaim.commit();
+    BufferClaim replyClaim = claims.get();
+    int status = lowLevelClient.tryClaimToRequest(
+        replyTo.sourceNodeId(),
+        replyTo.sourceServiceId(),
+        {{templateId}},
+        replyTo.correlationId(),
+        segment.byteSize(),
+        replyClaim);
+    if (status != RingloomStatus.OK) {
+      return status;
     }
+    MemorySegment.copy(
+        segment,
+        ValueLayout.JAVA_BYTE,
+        0,
+        replyClaim.payloadSegment(),
+        ValueLayout.JAVA_BYTE,
+        0,
+        segment.byteSize());
+    return replyClaim.commit();
   }

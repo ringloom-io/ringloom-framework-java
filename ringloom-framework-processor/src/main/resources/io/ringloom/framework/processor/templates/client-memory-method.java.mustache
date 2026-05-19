@@ -2,6 +2,7 @@
   @Override
   public int {{methodName}}({{{payloadType}}} {{payloadName}}) {
     MemorySegment segment = {{payloadName}} == null ? MemorySegment.NULL : {{payloadName}};
+    BufferClaim claim = claims.get();
     int status = lowLevelClient.tryClaim({{templateId}}, segment.byteSize(), claim);
     if (status != RingloomStatus.OK) {
       return status;

@@ -8,13 +8,14 @@ import io.ringloom.framework.eventloop.IdleStrategy;
 import io.ringloom.framework.eventloop.NoOpIdleStrategy;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.service.RingloomMessage;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.util.Objects;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
+import org.jctools.queues.MpscArrayQueue;
 
 /**
  * Message execution policy that copies payloads to partition-affine worker threads.
@@ -53,16 +54,22 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
         ingressContext.updateFrom(message);
         long key = extractor.partitionKey(message, ingressContext);
         Worker worker = workers[Math.floorMod(Long.hashCode(key), workers.length)];
-        Slot slot = worker.copy(message, ingressContext.runtime());
+        Slot slot = worker.copy(
+                message, ingressContext.runtime(), backpressurePolicy != WorkerBackpressurePolicy.FAIL_FAST);
+        if (slot == null) {
+            return -1;
+        }
         while (!closed.get()) {
             if (worker.offer(slot)) {
                 return 1;
             }
             if (backpressurePolicy == WorkerBackpressurePolicy.FAIL_FAST) {
+                worker.release(slot);
                 return -1;
             }
             LockSupport.parkNanos(1_000L);
         }
+        worker.release(slot);
         return -1;
     }
 
@@ -78,11 +85,13 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
 
     private static final class Worker implements Runnable, AutoCloseable {
         private final GeneratedMessageDispatcher dispatcher;
-        private final ArrayBlockingQueue<Slot> queue;
+        private final MpscArrayQueue<Slot> free;
+        private final MpscArrayQueue<Slot> queue;
         private final int maxPayloadBytes;
         private final MessageContext context = new MessageContext();
         private final IdleStrategy idleStrategy;
         private final AtomicBoolean running = new AtomicBoolean(true);
+        private final Arena arena = Arena.ofShared();
         private volatile Thread thread;
 
         Worker(
@@ -91,18 +100,39 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                 int maxPayloadBytes,
                 IdleStrategy idleStrategy) {
             this.dispatcher = dispatcher;
-            this.queue = new ArrayBlockingQueue<>(queueCapacity);
+            this.free = new MpscArrayQueue<>(queueCapacity);
+            this.queue = new MpscArrayQueue<>(queueCapacity);
             this.maxPayloadBytes = maxPayloadBytes;
             this.idleStrategy = idleStrategy == null ? new NoOpIdleStrategy() : idleStrategy;
+            for (int i = 0; i < queueCapacity; i++) {
+                if (!free.offer(new Slot(arena.allocate(maxPayloadBytes), maxPayloadBytes))) {
+                    throw new IllegalStateException("failed to initialize partitioned worker slot pool");
+                }
+            }
         }
 
-        Slot copy(RingloomMessage message, RingloomRuntime runtime) {
+        Slot copy(RingloomMessage message, RingloomRuntime runtime, boolean waitForSlot) {
             if (message.payloadLength() > maxPayloadBytes) {
                 throw new IllegalArgumentException("payload exceeds partitioned worker maxPayloadBytes");
             }
-            byte[] payload = new byte[(int) message.payloadLength()];
-            MemorySegment.copy(message.payloadSegment(), ValueLayout.JAVA_BYTE, 0, payload, 0, payload.length);
-            return new Slot(
+            Slot slot = free.poll();
+            while (slot == null && waitForSlot && running.get()) {
+                LockSupport.parkNanos(1_000L);
+                slot = free.poll();
+            }
+            if (slot == null) {
+                return null;
+            }
+            long payloadLength = message.payloadLength();
+            MemorySegment.copy(
+                    message.payloadSegment(),
+                    ValueLayout.JAVA_BYTE,
+                    0,
+                    slot.payload,
+                    ValueLayout.JAVA_BYTE,
+                    0,
+                    payloadLength);
+            slot.update(
                     runtime,
                     message.correlationId(),
                     message.sourceNodeId(),
@@ -111,11 +141,21 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                     message.targetServiceId(),
                     message.templateId(),
                     message.flags(),
-                    payload);
+                    payloadLength);
+            return slot;
         }
 
         boolean offer(Slot slot) {
-            return queue.offer(slot);
+            return slot != null && queue.offer(slot);
+        }
+
+        void release(Slot slot) {
+            if (slot != null) {
+                slot.clear();
+                while (!free.offer(slot) && running.get()) {
+                    LockSupport.parkNanos(1_000L);
+                }
+            }
         }
 
         @Override
@@ -127,18 +167,22 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                     idleStrategy.idle(0);
                     continue;
                 }
-                context.updateCopied(
-                        slot.correlationId,
-                        slot.sourceNodeId,
-                        slot.sourceServiceId,
-                        slot.targetNodeId,
-                        slot.targetServiceId,
-                        slot.templateId,
-                        slot.flags,
-                        MemorySegment.ofArray(slot.payload));
-                context.runtime(slot.runtime);
-                dispatcher.onContextMessage(context);
-                idleStrategy.idle(1);
+                try {
+                    context.updateCopied(
+                            slot.correlationId,
+                            slot.sourceNodeId,
+                            slot.sourceServiceId,
+                            slot.targetNodeId,
+                            slot.targetServiceId,
+                            slot.templateId,
+                            slot.flags,
+                            slot.payloadSegment());
+                    context.runtime(slot.runtime);
+                    dispatcher.onContextMessage(context);
+                    idleStrategy.idle(1);
+                } finally {
+                    release(slot);
+                }
             }
         }
 
@@ -154,17 +198,67 @@ public final class PartitionedWorkerExecutionPolicy implements MessageExecutionP
                     Thread.currentThread().interrupt();
                 }
             }
+            arena.close();
         }
     }
 
-    private record Slot(
-            RingloomRuntime runtime,
-            long correlationId,
-            short sourceNodeId,
-            short sourceServiceId,
-            short targetNodeId,
-            short targetServiceId,
-            int templateId,
-            int flags,
-            byte[] payload) {}
+    private static final class Slot {
+        private final MemorySegment payload;
+        private final long maxPayloadBytes;
+        private RingloomRuntime runtime;
+        private long correlationId;
+        private short sourceNodeId;
+        private short sourceServiceId;
+        private short targetNodeId;
+        private short targetServiceId;
+        private int templateId;
+        private int flags;
+        private long payloadLength;
+        private MemorySegment payloadView;
+
+        Slot(MemorySegment payload, long maxPayloadBytes) {
+            this.payload = payload;
+            this.maxPayloadBytes = maxPayloadBytes;
+            this.payloadView = payload;
+        }
+
+        void update(
+                RingloomRuntime runtime,
+                long correlationId,
+                short sourceNodeId,
+                short sourceServiceId,
+                short targetNodeId,
+                short targetServiceId,
+                int templateId,
+                int flags,
+                long payloadLength) {
+            this.runtime = runtime;
+            this.correlationId = correlationId;
+            this.sourceNodeId = sourceNodeId;
+            this.sourceServiceId = sourceServiceId;
+            this.targetNodeId = targetNodeId;
+            this.targetServiceId = targetServiceId;
+            this.templateId = templateId;
+            this.flags = flags;
+            this.payloadLength = payloadLength;
+            this.payloadView = payloadLength == maxPayloadBytes ? payload : payload.asSlice(0, payloadLength);
+        }
+
+        MemorySegment payloadSegment() {
+            return payloadView;
+        }
+
+        void clear() {
+            runtime = null;
+            correlationId = 0;
+            sourceNodeId = 0;
+            sourceServiceId = 0;
+            targetNodeId = 0;
+            targetServiceId = 0;
+            templateId = 0;
+            flags = 0;
+            payloadLength = 0;
+            payloadView = payload;
+        }
+    }
 }

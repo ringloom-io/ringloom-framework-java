@@ -5,11 +5,16 @@ import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.serialization.DecodeContext;
+import io.ringloom.framework.serialization.FlyweightDecoder;
+import io.ringloom.framework.serialization.MessageDecoder;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import java.util.List;
 
 public final class {{appName}} implements GeneratedRingloomApplication {
   private final java.util.Map<Class<?>, ?> components;
+  private SerializerRegistry serializers = SerializerRegistry.EMPTY;
+  private final ThreadLocal<DecodeContext> partitionDecodeContexts = ThreadLocal.withInitial(DecodeContext::new);
   private {{dispatcherName}} dispatcher;
 
   public {{appName}}() {
@@ -54,8 +59,10 @@ public final class {{appName}} implements GeneratedRingloomApplication {
 
   @Override
   public void initializeSerializers(SerializerRegistry serializers) {
+    this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
     generatedDispatcher().initializeSerializers(serializers);
   }
+{{{partitionKeyExtractorSources}}}
 
   @Override
   public GeneratedMessageDispatcher dispatcher() {

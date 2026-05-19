@@ -7,6 +7,8 @@
     if (encoder == null) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
+    EncodeContext encodeContext = encodeContexts.get();
+    BufferClaim claim = claims.get();
     final int payloadLength;
     try {
       payloadLength = encoder.encodedLength({{payloadName}}, encodeContext);
