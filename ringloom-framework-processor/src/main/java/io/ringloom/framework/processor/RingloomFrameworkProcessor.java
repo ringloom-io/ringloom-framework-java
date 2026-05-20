@@ -940,6 +940,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private String partitionKeyExtractorSources(List<Handler> handlers, Elements elements) {
         StringBuilder entries = new StringBuilder();
+        StringBuilder cases = new StringBuilder();
         StringBuilder methods = new StringBuilder();
         int index = 0;
         for (Handler handler : handlers) {
@@ -954,6 +955,11 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                     .append(handler.templateId())
                     .append(", this::")
                     .append(methodName);
+            cases.append("      case ")
+                    .append(handler.templateId())
+                    .append(" -> ")
+                    .append(methodName)
+                    .append("(message, context);\n");
             methods.append(partitionKeyMethodSource(methodName, handler, elements));
             index++;
         }
@@ -963,11 +969,26 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         return """
 
               @Override
+              public boolean hasPartitionKeyExtractors() {
+                return true;
+              }
+
+              @Override
+              public long partitionKey(
+                  int templateId,
+                  io.ringloom.service.RingloomMessage message,
+                  io.ringloom.framework.dispatch.MessageContext context) {
+                return switch (templateId) {
+            %s      default -> throw new IllegalStateException("missing partition-key extractor for template " + templateId);
+                };
+              }
+
+              @Override
               public java.util.Map<Integer, io.ringloom.framework.generated.GeneratedPartitionKeyExtractor> partitionKeyExtractors() {
                 return java.util.Map.of(
             %s);
               }
-            %s""".formatted(entries, methods);
+            %s""".formatted(cases, entries, methods);
     }
 
     private String partitionKeyMethodSource(String methodName, Handler handler, Elements elements) {

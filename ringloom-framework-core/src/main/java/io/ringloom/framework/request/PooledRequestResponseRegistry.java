@@ -3,9 +3,7 @@ package io.ringloom.framework.request;
 
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import java.util.ArrayDeque;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import org.agrona.collections.Long2ObjectHashMap;
 
 /**
  * {@link RequestResponseRegistry} backed by a fixed pool of reusable {@link PendingRequest}
@@ -14,7 +12,7 @@ import java.util.Map;
 public final class PooledRequestResponseRegistry implements RequestResponseRegistry {
     private final PendingRequest[] slots;
     private final ArrayDeque<PendingRequest> free;
-    private final Map<Long, PendingRequest> byCorrelationId;
+    private final Long2ObjectHashMap<PendingRequest> byCorrelationId;
 
     public PooledRequestResponseRegistry(int capacity) {
         if (capacity <= 0) {
@@ -22,7 +20,7 @@ public final class PooledRequestResponseRegistry implements RequestResponseRegis
         }
         this.slots = new PendingRequest[capacity];
         this.free = new ArrayDeque<>(capacity);
-        this.byCorrelationId = new HashMap<>(capacity);
+        this.byCorrelationId = new Long2ObjectHashMap<>(capacity, 0.6f);
         for (int i = 0; i < capacity; i++) {
             PendingRequest request = new PendingRequest(i);
             slots[i] = request;
@@ -121,8 +119,7 @@ public final class PooledRequestResponseRegistry implements RequestResponseRegis
 
     @Override
     public synchronized void completeAll(int status) {
-        for (PendingRequest request : List.copyOf(byCorrelationId.values())) {
-            byCorrelationId.remove(request.correlationId());
+        for (PendingRequest request : byCorrelationId.values()) {
             request.complete(status, null);
             if (request.awaiter() == null) {
                 releaseSlot(request);

@@ -5,13 +5,15 @@ import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.dispatch.MessageExecutionPolicy;
 import io.ringloom.service.MessageConsumer;
+import io.ringloom.service.MessageHandler;
+import io.ringloom.service.RingloomMessage;
 import java.util.Objects;
 import org.agrona.concurrent.Agent;
 
 /**
  * Agent that polls inbound messages and forwards them to the configured execution policy.
  */
-public final class MessageConsumerAgent implements Agent {
+public final class MessageConsumerAgent implements Agent, MessageHandler {
     private final String roleName;
     private final MessageConsumer consumer;
     private final MessageExecutionPolicy executionPolicy;
@@ -41,7 +43,12 @@ public final class MessageConsumerAgent implements Agent {
 
     @Override
     public int doWork() {
-        return consumer.poll(message -> executionPolicy.onMessage(message, context), pollLimit);
+        return consumer.poll(this, pollLimit);
+    }
+
+    @Override
+    public void onMessage(RingloomMessage message) {
+        executionPolicy.onMessage(message, context);
     }
 
     @Override

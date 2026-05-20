@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.serialization;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
+import org.agrona.collections.Object2ObjectHashMap;
 
 /**
  * Registry of named, typed encoders, decoders, and flyweight decoders available to generated
@@ -16,14 +15,14 @@ public final class SerializerRegistry {
 
     public static final SerializerRegistry EMPTY = new Builder().build();
 
-    private final Map<Key, MessageEncoder<?>> encoders;
-    private final Map<Key, MessageDecoder<?>> decoders;
-    private final Map<Key, FlyweightDecoder<?>> flyweights;
+    private final Registry<MessageEncoder<?>> encoders;
+    private final Registry<MessageDecoder<?>> decoders;
+    private final Registry<FlyweightDecoder<?>> flyweights;
 
     private SerializerRegistry(Builder builder) {
-        this.encoders = Map.copyOf(builder.encoders);
-        this.decoders = Map.copyOf(builder.decoders);
-        this.flyweights = Map.copyOf(builder.flyweights);
+        this.encoders = new Registry<>(builder.encoders);
+        this.decoders = new Registry<>(builder.decoders);
+        this.flyweights = new Registry<>(builder.flyweights);
     }
 
     public static Builder builder() {
@@ -57,47 +56,36 @@ public final class SerializerRegistry {
         builder.flyweights.putAll(flyweights);
     }
 
-    private static <T> T lookup(Map<Key, T> values, String name, Class<?> requestedType) {
-        T exact = values.get(new Key(name, requestedType));
-        if (exact != null) {
-            return exact;
-        }
-
-        Key bestMatch = null;
-        for (Key candidate : values.keySet()) {
-            if (!candidate.name().equals(name) || !candidate.type().isAssignableFrom(requestedType)) {
-                continue;
-            }
-            if (bestMatch == null || bestMatch.type().isAssignableFrom(candidate.type())) {
-                bestMatch = candidate;
-            }
-        }
-        return bestMatch == null ? null : values.get(bestMatch);
+    private static <T> T lookup(Registry<T> values, String name, Class<?> requestedType) {
+        return values.lookup(name, requestedType);
     }
 
     public static final class Builder {
 
-        private final Map<Key, MessageEncoder<?>> encoders = new HashMap<>();
-        private final Map<Key, MessageDecoder<?>> decoders = new HashMap<>();
-        private final Map<Key, FlyweightDecoder<?>> flyweights = new HashMap<>();
+        private final Registry<MessageEncoder<?>> encoders = new Registry<>();
+        private final Registry<MessageDecoder<?>> decoders = new Registry<>();
+        private final Registry<FlyweightDecoder<?>> flyweights = new Registry<>();
 
         public <T> Builder encoder(String name, Class<T> type, MessageEncoder<? super T> encoder) {
             encoders.put(
-                    new Key(requireName(name), Objects.requireNonNull(type, "type")),
+                    requireName(name),
+                    Objects.requireNonNull(type, "type"),
                     Objects.requireNonNull(encoder, "encoder"));
             return this;
         }
 
         public <T> Builder decoder(String name, Class<T> type, MessageDecoder<? extends T> decoder) {
             decoders.put(
-                    new Key(requireName(name), Objects.requireNonNull(type, "type")),
+                    requireName(name),
+                    Objects.requireNonNull(type, "type"),
                     Objects.requireNonNull(decoder, "decoder"));
             return this;
         }
 
         public <T> Builder flyweight(String name, Class<T> type, FlyweightDecoder<? extends T> decoder) {
             flyweights.put(
-                    new Key(requireName(name), Objects.requireNonNull(type, "type")),
+                    requireName(name),
+                    Objects.requireNonNull(type, "type"),
                     Objects.requireNonNull(decoder, "decoder"));
             return this;
         }
@@ -112,7 +100,60 @@ public final class SerializerRegistry {
         }
     }
 
-    private record Key(String name, Class<?> type) {}
+    private static final class Registry<T> {
+        private final Object2ObjectHashMap<String, Object2ObjectHashMap<Class<?>, T>> values =
+                new Object2ObjectHashMap<>();
+
+        private Registry() {}
+
+        private Registry(Registry<? extends T> source) {
+            putAll(source);
+        }
+
+        private T lookup(String name, Class<?> requestedType) {
+            Object2ObjectHashMap<Class<?>, T> bucket = values.get(name);
+            if (bucket == null) {
+                return null;
+            }
+            T exact = bucket.get(requestedType);
+            if (exact != null) {
+                return exact;
+            }
+            Class<?> bestType = null;
+            T best = null;
+            for (java.util.Map.Entry<Class<?>, T> entry : bucket.entrySet()) {
+                Class<?> candidate = entry.getKey();
+                if (!candidate.isAssignableFrom(requestedType)) {
+                    continue;
+                }
+                if (bestType == null || bestType.isAssignableFrom(candidate)) {
+                    bestType = candidate;
+                    best = entry.getValue();
+                }
+            }
+            return best;
+        }
+
+        private void put(String name, Class<?> type, T value) {
+            Object2ObjectHashMap<Class<?>, T> bucket = values.get(name);
+            if (bucket == null) {
+                bucket = new Object2ObjectHashMap<>();
+                values.put(name, bucket);
+            }
+            bucket.put(type, value);
+        }
+
+        private void putAll(Registry<? extends T> source) {
+            for (var sourceEntry : source.values.entrySet()) {
+                Object2ObjectHashMap<Class<?>, T> targetBucket = values.get(sourceEntry.getKey());
+                if (targetBucket == null) {
+                    targetBucket = new Object2ObjectHashMap<>();
+                    values.put(sourceEntry.getKey(), targetBucket);
+                }
+                targetBucket.putAll(sourceEntry.getValue());
+            }
+        }
+    }
 
     private static String requireName(String name) {
         Objects.requireNonNull(name, "name");

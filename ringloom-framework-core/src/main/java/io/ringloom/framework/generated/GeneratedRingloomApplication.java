@@ -3,7 +3,9 @@ package io.ringloom.framework.generated;
 
 import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomSerializerConfig;
+import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.service.RingloomMessage;
 import java.util.List;
 import java.util.Map;
 
@@ -83,6 +85,31 @@ public interface GeneratedRingloomApplication {
      */
     default Map<Integer, GeneratedPartitionKeyExtractor> partitionKeyExtractors() {
         return Map.of();
+    }
+
+    /**
+     * Returns whether generated partition-key extraction is available.
+     *
+     * @return {@code true} when the application has generated partition-key extractors
+     */
+    default boolean hasPartitionKeyExtractors() {
+        return !partitionKeyExtractors().isEmpty();
+    }
+
+    /**
+     * Extracts a generated partition key for a message template without boxed map lookup.
+     *
+     * @param templateId the inbound message template id
+     * @param message the inbound message
+     * @param context the mutable message context
+     * @return the generated partition key
+     */
+    default long partitionKey(int templateId, RingloomMessage message, MessageContext context) {
+        GeneratedPartitionKeyExtractor extractor = partitionKeyExtractors().get(templateId);
+        if (extractor == null) {
+            throw new IllegalStateException("missing partition-key extractor for template " + templateId);
+        }
+        return extractor.partitionKey(message, context);
     }
 
     /**

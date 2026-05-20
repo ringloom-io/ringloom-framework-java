@@ -175,6 +175,9 @@ final class RingloomFrameworkProcessorTest {
                 .contains("test.OrderEncoder")
                 .contains("builder.flyweight(")
                 .contains("test.OrderDecoder.class")
+                .contains("hasPartitionKeyExtractors()")
+                .contains("public long partitionKey(")
+                .contains("case 102 -> partitionKey102(message, context);")
                 .contains("partitionKeyExtractors()")
                 .contains("return decoded.accountId()");
         assertThat(Files.readString(generated.resolve("test/OrderClient_RingloomClient.java")))

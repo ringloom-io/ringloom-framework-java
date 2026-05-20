@@ -16,7 +16,6 @@ import io.ringloom.framework.eventloop.IdleStrategies;
 import io.ringloom.framework.eventloop.MessageConsumerAgent;
 import io.ringloom.framework.eventloop.SchedulerAgent;
 import io.ringloom.framework.generated.GeneratedClientBinding;
-import io.ringloom.framework.generated.GeneratedPartitionKeyExtractor;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.request.PooledRequestResponseRegistry;
@@ -25,12 +24,15 @@ import io.ringloom.framework.scheduler.RingloomScheduler;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import io.ringloom.service.MessageConsumer;
+import io.ringloom.service.MessageHandler;
 import io.ringloom.service.RingloomClient;
+import io.ringloom.service.RingloomMessage;
 import io.ringloom.service.RingloomService;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.agrona.concurrent.CompositeAgent;
 import org.slf4j.Logger;
@@ -48,11 +50,15 @@ public final class RingloomRuntime implements AutoCloseable {
     private final Logger logger;
     private final RequestResponseRegistry requestRegistry;
     private final RingloomScheduler scheduler;
+    private final ThreadLocal<io.ringloom.framework.dispatch.MessageContext> pollContexts;
+    private final MessageHandler pollMessageHandler = this::onPolledMessage;
     private final Map<String, RingloomClient> lowLevelClients = new HashMap<>();
     private final Map<Class<?>, Object> generatedClients = new HashMap<>();
     private final Object shutdownMonitor = new Object();
     private final AtomicBoolean started = new AtomicBoolean(false);
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean startupLogged = new AtomicBoolean(false);
+    private volatile long startupStartedNanos;
     private RingloomService service;
     private MessageConsumer consumer;
     private MessageExecutionPolicy messageExecutionPolicy;
@@ -82,6 +88,7 @@ public final class RingloomRuntime implements AutoCloseable {
         this.requestRegistry =
                 new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
         this.scheduler = new RingloomScheduler(config.runtime().scheduler(), this);
+        this.pollContexts = ThreadLocal.withInitial(() -> new io.ringloom.framework.dispatch.MessageContext(this));
     }
 
     /**
@@ -94,6 +101,7 @@ public final class RingloomRuntime implements AutoCloseable {
         if (generatedApplication.requiresCorrelationAwareSends()) {
             throw new IllegalStateException("generated application requires correlation-aware native send ABI");
         }
+        startupStartedNanos = System.nanoTime();
         service = RingloomService.start(config.service().toLowLevelConfig());
         consumer = service.messageConsumer();
         for (GeneratedClientBinding<?> binding : generatedApplication.clients()) {
@@ -105,6 +113,9 @@ public final class RingloomRuntime implements AutoCloseable {
         generatedApplication.initializeSerializers(serializers);
         messageExecutionPolicy = createMessageExecutionPolicy();
         generatedApplication.onRuntimeStarted(this);
+        if (config.runtime().mode() == RuntimeMode.EXTERNAL) {
+            logStartupComplete();
+        }
     }
 
     /**
@@ -134,12 +145,7 @@ public final class RingloomRuntime implements AutoCloseable {
      */
     public int pollMessages() {
         ensureStarted();
-        return consumer.poll(
-                message -> {
-                    var context = new io.ringloom.framework.dispatch.MessageContext(this);
-                    messageExecutionPolicy.onMessage(message, context);
-                },
-                config.runtime().messages().pollLimit());
+        return consumer.poll(pollMessageHandler, config.runtime().messages().pollLimit());
     }
 
     /**
@@ -151,6 +157,7 @@ public final class RingloomRuntime implements AutoCloseable {
         ensureStarted();
         RuntimeMode mode = config.runtime().mode();
         if (mode == RuntimeMode.EXTERNAL) {
+            logStartupComplete();
             return;
         }
         ControlAgent controlAgent =
@@ -169,6 +176,7 @@ public final class RingloomRuntime implements AutoCloseable {
                     logger,
                     eventLoopAffinity(sharedCpuCore()));
             messageLoop.startThread(threadFactory);
+            logStartupComplete();
             return;
         }
         controlLoop = new EventLoop(
@@ -185,6 +193,7 @@ public final class RingloomRuntime implements AutoCloseable {
                 eventLoopAffinity(config.runtime().messages().cpuCore()));
         controlLoop.startThread(threadFactory);
         messageLoop.startThread(threadFactory);
+        logStartupComplete();
     }
 
     /**
@@ -343,18 +352,24 @@ public final class RingloomRuntime implements AutoCloseable {
         return cpuCore == null ? null : () -> CpuAffinity.setCurrentThreadAffinity(cpuCore);
     }
 
+    private void logStartupComplete() {
+        if (!startupLogged.compareAndSet(false, true)) {
+            return;
+        }
+        long startedAt = startupStartedNanos == 0 ? System.nanoTime() : startupStartedNanos;
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+        logger.info("RingLoom runtime bootstrapped in {} ms", elapsedMillis);
+    }
+
+    private void onPolledMessage(RingloomMessage message) {
+        messageExecutionPolicy.onMessage(message, pollContexts.get());
+    }
+
     private PartitionKeyExtractor partitionExtractor() {
-        Map<Integer, GeneratedPartitionKeyExtractor> extractors = generatedApplication.partitionKeyExtractors();
-        if (extractors.isEmpty()) {
+        if (!generatedApplication.hasPartitionKeyExtractors()) {
             throw new IllegalStateException("partitioned execution requires generated partition-key extractors");
         }
-        return (message, context) -> {
-            GeneratedPartitionKeyExtractor extractor = extractors.get(message.templateId());
-            if (extractor == null) {
-                throw new IllegalStateException("missing partition-key extractor for template " + message.templateId());
-            }
-            return extractor.partitionKey(message, context);
-        };
+        return (message, context) -> generatedApplication.partitionKey(message.templateId(), message, context);
     }
 
     private void ensureStarted() {

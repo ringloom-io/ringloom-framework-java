@@ -134,6 +134,12 @@ public final class OrdersMain {
 }
 ```
 
+Successful bootstrap logs the elapsed startup time at INFO level after the native
+service, generated clients, serializers, execution policies, generated startup
+hooks, and owned event loops have been started. In `external` runtime mode the
+same log is emitted after `RingloomRuntime.start()` because the application owns
+polling threads.
+
 In an IoC framework, `RingloomRuntime`, generated clients, generated dispatcher,
 metrics facade, and configured serializers should be exposed as beans. The core
 types should use constructor injection and should not require static global
@@ -406,10 +412,17 @@ local `EventLoop` wrapper for thread lifecycle and shutdown:
 ```java
 import org.agrona.concurrent.Agent;
 import org.agrona.concurrent.IdleStrategy;
+import org.slf4j.Logger;
 
 public final class EventLoop implements AutoCloseable {
-    public EventLoop(String name, Agent agent, IdleStrategy idleStrategy);
-    public EventLoop(String name, Agent agent, IdleStrategy idleStrategy, Runnable threadInitializer);
+    public EventLoop(String name, Agent agent, IdleStrategy idleStrategy, Logger logger);
+    public EventLoop(
+        String name,
+        Agent agent,
+        IdleStrategy idleStrategy,
+        Logger logger,
+        Runnable threadInitializer
+    );
     public void startThread(ThreadFactory factory);
     public void close();
 }
@@ -627,6 +640,12 @@ The hot path can be allocation-free when an application follows these rules:
    sizes so enqueue copies fit preallocated slots.
 8. For request/response callbacks, use stateless callback instances and
    caller-owned context objects rather than capturing lambdas.
+
+Core runtime lookup structures should also avoid boxed keys and per-message key
+objects. Request correlation uses an Agrona primitive `long` map, serializer
+lookup uses nested Agrona object maps instead of allocating composite keys, and
+generated partition-key extraction dispatches through a generated `switch` rather
+than a boxed `Map<Integer, ...>` lookup.
 
 The framework should include a hot-path allocation test suite similar to the
 current Java binding allocation tests. Tests should verify steady-state polling
