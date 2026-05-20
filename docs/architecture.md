@@ -86,7 +86,7 @@ Generated code, created at compile time
         v
 ringloom-framework-core
   RingloomRuntime
-  EventLoop / AgentRunner / IdleStrategy
+  EventLoop / Agrona Agent / IdleStrategy
   ClientInvoker / MessageDispatcher
   MessageExecutionPolicy / PartitionedWorker
   RequestResponseRegistry
@@ -371,19 +371,15 @@ can be separate.
 
 ### EventLoop
 
-The framework should define a Java event-loop abstraction similar to the native
-agent model:
+The framework uses Agrona's `Agent` model for event-loop work and keeps a small
+local `EventLoop` wrapper for thread lifecycle and shutdown:
 
 ```java
-public interface Agent {
-    int doWork();
-    default void onStart() {}
-    default void onClose() {}
-}
+import org.agrona.concurrent.Agent;
+import org.agrona.concurrent.IdleStrategy;
 
 public final class EventLoop implements AutoCloseable {
     public EventLoop(String name, Agent agent, IdleStrategy idleStrategy);
-    public void run();
     public void startThread(ThreadFactory factory);
     public void close();
 }
@@ -395,7 +391,7 @@ Common agents:
 |---|---|---|
 | `ControlAgent` | `RingloomService` | Calls `pollControl(limit)` to drive discovery, lifecycle callbacks, and heartbeats. |
 | `MessageConsumerAgent` | `MessageConsumer` | Calls `poll(ingress, limit)` and hands messages to the configured execution policy. |
-| `CompositeAgent` | multiple agents | Runs multiple agents on one thread for compact deployments. |
+| Agrona `CompositeAgent` | multiple agents | Runs multiple agents on one thread for compact deployments. |
 | `LifecycleAgent` | runtime state | Optional startup/shutdown hooks and health transitions. |
 
 Threading modes:
@@ -449,11 +445,12 @@ other JDK-internal scheduler hooks.
 
 Initial Java idle strategies:
 
-1. `BusySpinIdleStrategy` for lowest latency and pinned cores.
-2. `YieldingIdleStrategy` for lower CPU burn.
-3. `SleepingIdleStrategy` for background services.
-4. `BackoffIdleStrategy` for default balanced behavior.
-5. `NoOpIdleStrategy` for externally managed loops.
+1. Agrona `BusySpinIdleStrategy` for lowest latency and pinned cores.
+2. Local `YieldingIdleStrategy` for lower CPU burn while preserving the
+   existing spin-then-yield behavior.
+3. Agrona `SleepingIdleStrategy` for background services.
+4. Agrona `BackoffIdleStrategy` for default balanced behavior.
+5. Agrona `NoOpIdleStrategy` for externally managed loops.
 
 All idle strategies should be allocation-free and configurable through YAML.
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.eventloop;
 
+import org.agrona.concurrent.IdleStrategy;
+
 /**
  * Idle strategy that spins briefly and then yields the thread.
  */
@@ -21,6 +23,11 @@ public final class YieldingIdleStrategy implements IdleStrategy {
             reset();
             return;
         }
+        idle();
+    }
+
+    @Override
+    public void idle() {
         if (idleCount++ < spinCount) {
             Thread.onSpinWait();
         } else {
@@ -31,5 +38,10 @@ public final class YieldingIdleStrategy implements IdleStrategy {
     @Override
     public void reset() {
         idleCount = 0;
+    }
+
+    @Override
+    public String alias() {
+        return "spin-yield";
     }
 }

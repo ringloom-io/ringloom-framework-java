@@ -10,11 +10,7 @@ import static org.mockito.Mockito.verify;
 import io.ringloom.framework.config.IdleStrategyKind;
 import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.dispatch.MessageContext;
-import io.ringloom.framework.eventloop.BackoffIdleStrategy;
-import io.ringloom.framework.eventloop.BusySpinIdleStrategy;
 import io.ringloom.framework.eventloop.IdleStrategies;
-import io.ringloom.framework.eventloop.NoOpIdleStrategy;
-import io.ringloom.framework.eventloop.SleepingIdleStrategy;
 import io.ringloom.framework.eventloop.YieldingIdleStrategy;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
@@ -25,6 +21,10 @@ import io.ringloom.framework.tracing.NoopTraceAdapter;
 import io.ringloom.service.RingloomMessage;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.agrona.concurrent.BackoffIdleStrategy;
+import org.agrona.concurrent.BusySpinIdleStrategy;
+import org.agrona.concurrent.NoOpIdleStrategy;
+import org.agrona.concurrent.SleepingIdleStrategy;
 import org.junit.jupiter.api.Test;
 
 final class CoreFrameworkDefaultsTest {
@@ -45,12 +45,6 @@ final class CoreFrameworkDefaultsTest {
         assertThatThrownBy(() -> new YieldingIdleStrategy(-1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("spinCount must be non-negative");
-        assertThatThrownBy(() -> new SleepingIdleStrategy(-1))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("parkNanos must be non-negative");
-        assertThatThrownBy(() -> new BackoffIdleStrategy(0, 0, 2, 1))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("invalid backoff settings");
     }
 
     @Test

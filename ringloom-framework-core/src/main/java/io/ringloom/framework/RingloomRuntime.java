@@ -9,7 +9,6 @@ import io.ringloom.framework.dispatch.MessageExecutionPolicy;
 import io.ringloom.framework.dispatch.PartitionKeyExtractor;
 import io.ringloom.framework.dispatch.PartitionedWorkerExecutionPolicy;
 import io.ringloom.framework.dispatch.VirtualThreadExecutionPolicy;
-import io.ringloom.framework.eventloop.CompositeAgent;
 import io.ringloom.framework.eventloop.ControlAgent;
 import io.ringloom.framework.eventloop.EventLoop;
 import io.ringloom.framework.eventloop.IdleStrategies;
@@ -30,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.agrona.concurrent.CompositeAgent;
 import org.slf4j.Logger;
 
 /**
@@ -148,7 +148,7 @@ public final class RingloomRuntime implements AutoCloseable {
         if (mode == RuntimeMode.SHARED) {
             messageLoop = new EventLoop(
                     "ringloom-shared",
-                    new CompositeAgent("ringloom-shared", controlAgent, messageAgent),
+                    new CompositeAgent(controlAgent, messageAgent),
                     IdleStrategies.create(config.runtime().messages().idleStrategy()),
                     logger);
             messageLoop.startThread(threadFactory);
@@ -292,6 +292,7 @@ public final class RingloomRuntime implements AutoCloseable {
                 new ConsumerThreadExecutionPolicy(generatedApplication.dispatcher(), requestRegistry);
             case PARTITIONED_WORKERS ->
                 new PartitionedWorkerExecutionPolicy(
+                        this,
                         generatedApplication.dispatcher(),
                         partitionExtractor(),
                         config.runtime().execution().partitioned(),

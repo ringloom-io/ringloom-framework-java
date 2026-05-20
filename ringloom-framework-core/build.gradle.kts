@@ -5,6 +5,6 @@ plugins {
 dependencies {
     api(libs.ringloomJavaBindings)
     api(libs.slf4jApi)
-    implementation(libs.jctoolsCore)
+    implementation(libs.agrona)
     testRuntimeOnly(libs.slf4jSimple)
 }
