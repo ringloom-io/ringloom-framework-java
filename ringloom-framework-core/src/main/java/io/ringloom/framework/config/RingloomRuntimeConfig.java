@@ -26,6 +26,7 @@ public record RingloomRuntimeConfig(
         mode = Objects.requireNonNullElse(mode, RuntimeMode.DEDICATED);
         control = control == null ? RingloomEventLoopConfig.defaults() : control;
         messages = messages == null ? RingloomEventLoopConfig.defaults() : messages;
+        validateEventLoopAffinity(mode, control, messages);
         execution = execution == null ? MessageExecutionConfig.consumerThread() : execution;
         scheduler = scheduler == null ? SchedulerRuntimeConfig.defaults() : scheduler;
         requests = requests == null ? RequestRuntimeConfig.defaults() : requests;
@@ -38,5 +39,19 @@ public record RingloomRuntimeConfig(
      */
     public static RingloomRuntimeConfig defaults() {
         return new RingloomRuntimeConfig(RuntimeMode.DEDICATED, null, null, null, null, null, true);
+    }
+
+    private static void validateEventLoopAffinity(
+            RuntimeMode mode, RingloomEventLoopConfig control, RingloomEventLoopConfig messages) {
+        if (mode == RuntimeMode.EXTERNAL && (control.cpuCore() != null || messages.cpuCore() != null)) {
+            throw new IllegalArgumentException("event-loop cpuCore cannot be configured in external runtime mode");
+        }
+        if (mode == RuntimeMode.SHARED
+                && control.cpuCore() != null
+                && messages.cpuCore() != null
+                && !control.cpuCore().equals(messages.cpuCore())) {
+            throw new IllegalArgumentException(
+                    "shared runtime mode uses one event-loop thread, so control.cpuCore and messages.cpuCore must match");
+        }
     }
 }

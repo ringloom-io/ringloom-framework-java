@@ -110,10 +110,11 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         if (values.isEmpty()) {
             return RingloomEventLoopConfig.defaults();
         }
-        requireKeys(values, "eventLoop", Set.of("idleStrategy", "pollLimit", "execution"));
+        requireKeys(values, "eventLoop", Set.of("idleStrategy", "pollLimit", "cpuCore", "execution"));
         IdleStrategyKind idle = idleKind(string(values.get("idleStrategy"), "idleStrategy"));
         int pollLimit = integer(values.get("pollLimit"), "pollLimit", RingloomEventLoopConfig.DEFAULT_POLL_LIMIT);
-        return new RingloomEventLoopConfig(idle, pollLimit);
+        Integer cpuCore = optionalInteger(values.get("cpuCore"), "cpuCore");
+        return new RingloomEventLoopConfig(idle, pollLimit, cpuCore);
     }
 
     private static MessageExecutionConfig execution(Map<String, Object> values) {
@@ -235,6 +236,16 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
     private static int integer(Object value, String path, int defaultValue) {
         if (value == null) {
             return defaultValue;
+        }
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException(path + " must be an integer");
+        }
+        return number.intValue();
+    }
+
+    private static Integer optionalInteger(Object value, String path) {
+        if (value == null) {
+            return null;
         }
         if (!(value instanceof Number number)) {
             throw new IllegalArgumentException(path + " must be an integer");

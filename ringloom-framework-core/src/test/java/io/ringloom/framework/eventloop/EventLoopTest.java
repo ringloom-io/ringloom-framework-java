@@ -33,6 +33,7 @@ final class EventLoopTest {
         AtomicInteger starts = new AtomicInteger();
         AtomicInteger closes = new AtomicInteger();
         AtomicInteger work = new AtomicInteger();
+        AtomicInteger initializers = new AtomicInteger();
         Agent agent = new Agent() {
             @Override
             public int doWork() {
@@ -42,6 +43,7 @@ final class EventLoopTest {
 
             @Override
             public void onStart() {
+                assertThat(initializers.get()).isEqualTo(1);
                 starts.incrementAndGet();
             }
 
@@ -56,7 +58,12 @@ final class EventLoopTest {
             }
         };
         IdleStrategy idleStrategy = mock(IdleStrategy.class);
-        EventLoop loop = new EventLoop("test", agent, idleStrategy, LoggerFactory.getLogger(EventLoopTest.class));
+        EventLoop loop = new EventLoop(
+                "test",
+                agent,
+                idleStrategy,
+                LoggerFactory.getLogger(EventLoopTest.class),
+                initializers::incrementAndGet);
         ThreadFactory factory = Thread.ofPlatform().name("ringloom-test-loop").factory();
 
         // When
@@ -68,6 +75,7 @@ final class EventLoopTest {
 
         // Then
         assertThat(starts.get()).isEqualTo(1);
+        assertThat(initializers.get()).isEqualTo(1);
         assertThat(closes.get()).isEqualTo(1);
         assertThat(work.get()).isPositive();
         verify(idleStrategy, timeout(1_000).atLeastOnce()).idle(0);

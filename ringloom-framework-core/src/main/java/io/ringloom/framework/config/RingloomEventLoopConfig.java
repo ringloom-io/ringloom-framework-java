@@ -8,8 +8,9 @@ import java.util.Objects;
  *
  * @param idleStrategy the idle strategy used between polls
  * @param pollLimit the maximum units of work to poll per loop iteration
+ * @param cpuCore optional zero-based CPU core to pin the event-loop thread to
  */
-public record RingloomEventLoopConfig(IdleStrategyKind idleStrategy, int pollLimit) {
+public record RingloomEventLoopConfig(IdleStrategyKind idleStrategy, int pollLimit, Integer cpuCore) {
     /**
      * Default maximum work units polled per iteration.
      */
@@ -20,7 +21,14 @@ public record RingloomEventLoopConfig(IdleStrategyKind idleStrategy, int pollLim
         if (pollLimit < 0) {
             throw new IllegalArgumentException("pollLimit must be non-negative");
         }
+        if (cpuCore != null && (cpuCore < 0 || cpuCore > 1023)) {
+            throw new IllegalArgumentException("cpuCore must be between 0 and 1023");
+        }
         pollLimit = pollLimit == 0 ? DEFAULT_POLL_LIMIT : pollLimit;
+    }
+
+    public RingloomEventLoopConfig(IdleStrategyKind idleStrategy, int pollLimit) {
+        this(idleStrategy, pollLimit, null);
     }
 
     /**
@@ -29,6 +37,6 @@ public record RingloomEventLoopConfig(IdleStrategyKind idleStrategy, int pollLim
      * @return the framework defaults for event-loop polling
      */
     public static RingloomEventLoopConfig defaults() {
-        return new RingloomEventLoopConfig(IdleStrategyKind.BACKOFF, DEFAULT_POLL_LIMIT);
+        return new RingloomEventLoopConfig(IdleStrategyKind.BACKOFF, DEFAULT_POLL_LIMIT, null);
     }
 }

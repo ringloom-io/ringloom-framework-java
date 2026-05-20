@@ -25,17 +25,21 @@ final class YamlRingloomConfigLoaderTest {
                 name: orders
               runtime:
                 mode: shared
+                control:
+                  cpuCore: 2
+                messages:
+                  cpuCore: 2
+                  idleStrategy: yielding
+                  execution:
+                    mode: virtualThreads
+                    virtualThreads:
+                      maxInFlight: 17
                 scheduler:
                   maxTimers: 32
                   tickResolutionNanos: 1024
                   ticksPerWheel: 64
                   initialTickAllocation: 4
                   pollLimit: 8
-                messages:
-                  execution:
-                    mode: virtualThreads
-                    virtualThreads:
-                      maxInFlight: 17
               serializers:
                 default: sbe
                 entries:
@@ -54,6 +58,8 @@ final class YamlRingloomConfigLoaderTest {
         // Then
         assertThat(config.service().name()).isEqualTo("orders");
         assertThat(config.runtime().mode()).isEqualTo(RuntimeMode.SHARED);
+        assertThat(config.runtime().control().cpuCore()).isEqualTo(2);
+        assertThat(config.runtime().messages().cpuCore()).isEqualTo(2);
         assertThat(config.runtime().scheduler().maxTimers()).isEqualTo(32);
         assertThat(config.runtime().scheduler().tickResolutionNanos()).isEqualTo(1024);
         assertThat(config.runtime().scheduler().ticksPerWheel()).isEqualTo(64);

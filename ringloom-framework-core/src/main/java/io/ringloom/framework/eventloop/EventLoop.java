@@ -17,18 +17,25 @@ public final class EventLoop implements AutoCloseable {
     private final Agent agent;
     private final IdleStrategy idleStrategy;
     private final Logger logger;
+    private final Runnable threadInitializer;
     private volatile Thread thread;
     private volatile Throwable failure;
 
     public EventLoop(String name, Agent agent, IdleStrategy idleStrategy, Logger logger) {
+        this(name, agent, idleStrategy, logger, null);
+    }
+
+    public EventLoop(String name, Agent agent, IdleStrategy idleStrategy, Logger logger, Runnable threadInitializer) {
         this.name = Objects.requireNonNull(name, "name");
         this.agent = Objects.requireNonNull(agent, "agent");
         this.idleStrategy = Objects.requireNonNull(idleStrategy, "idleStrategy");
         this.logger = Objects.requireNonNull(logger, "logger");
+        this.threadInitializer = threadInitializer == null ? () -> {} : threadInitializer;
     }
 
     private void runLoop() {
         try {
+            threadInitializer.run();
             agent.onStart();
             while (!Thread.currentThread().isInterrupted()) {
                 int work = agent.doWork();

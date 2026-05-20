@@ -86,9 +86,43 @@ final class CoreConfigValidationTest {
         assertThatThrownBy(() -> new RingloomEventLoopConfig(null, -1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("pollLimit must be non-negative");
+        assertThatThrownBy(() -> new RingloomEventLoopConfig(null, 1, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("cpuCore must be between 0 and 1023");
+        assertThatThrownBy(() -> new RingloomEventLoopConfig(null, 1, 1024))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("cpuCore must be between 0 and 1023");
         assertThatThrownBy(() -> new VirtualThreadExecutionConfig(-1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("virtualThreads.maxInFlight must be positive");
+    }
+
+    @Test
+    void validatesRuntimeAffinitySettings() {
+        // Given
+        RingloomEventLoopConfig controlPinned = new RingloomEventLoopConfig(null, 1, 2);
+        RingloomEventLoopConfig messagesPinned = new RingloomEventLoopConfig(null, 1, 3);
+        RingloomEventLoopConfig samePinned = new RingloomEventLoopConfig(null, 1, 2);
+
+        // When / Then
+        assertThat(new RingloomRuntimeConfig(
+                                RuntimeMode.DEDICATED, controlPinned, messagesPinned, null, null, null, false)
+                        .control()
+                        .cpuCore())
+                .isEqualTo(2);
+        assertThatThrownBy(() -> new RingloomRuntimeConfig(
+                        RuntimeMode.SHARED, controlPinned, messagesPinned, null, null, null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(
+                        "shared runtime mode uses one event-loop thread, so control.cpuCore and messages.cpuCore must match");
+        assertThat(new RingloomRuntimeConfig(RuntimeMode.SHARED, controlPinned, samePinned, null, null, null, false)
+                        .messages()
+                        .cpuCore())
+                .isEqualTo(2);
+        assertThatThrownBy(() ->
+                        new RingloomRuntimeConfig(RuntimeMode.EXTERNAL, controlPinned, null, null, null, null, false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("event-loop cpuCore cannot be configured in external runtime mode");
     }
 
     @Test

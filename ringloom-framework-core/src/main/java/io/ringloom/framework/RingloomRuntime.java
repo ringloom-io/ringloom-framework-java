@@ -10,6 +10,7 @@ import io.ringloom.framework.dispatch.PartitionKeyExtractor;
 import io.ringloom.framework.dispatch.PartitionedWorkerExecutionPolicy;
 import io.ringloom.framework.dispatch.VirtualThreadExecutionPolicy;
 import io.ringloom.framework.eventloop.ControlAgent;
+import io.ringloom.framework.eventloop.CpuAffinity;
 import io.ringloom.framework.eventloop.EventLoop;
 import io.ringloom.framework.eventloop.IdleStrategies;
 import io.ringloom.framework.eventloop.MessageConsumerAgent;
@@ -165,7 +166,8 @@ public final class RingloomRuntime implements AutoCloseable {
                     "ringloom-shared",
                     new CompositeAgent(controlAgent, schedulerAgent, messageAgent),
                     IdleStrategies.create(config.runtime().messages().idleStrategy()),
-                    logger);
+                    logger,
+                    eventLoopAffinity(sharedCpuCore()));
             messageLoop.startThread(threadFactory);
             return;
         }
@@ -173,12 +175,14 @@ public final class RingloomRuntime implements AutoCloseable {
                 "ringloom-control",
                 new CompositeAgent(controlAgent, schedulerAgent),
                 IdleStrategies.create(config.runtime().control().idleStrategy()),
-                logger);
+                logger,
+                eventLoopAffinity(config.runtime().control().cpuCore()));
         messageLoop = new EventLoop(
                 "ringloom-messages",
                 messageAgent,
                 IdleStrategies.create(config.runtime().messages().idleStrategy()),
-                logger);
+                logger,
+                eventLoopAffinity(config.runtime().messages().cpuCore()));
         controlLoop.startThread(threadFactory);
         messageLoop.startThread(threadFactory);
     }
@@ -328,6 +332,15 @@ public final class RingloomRuntime implements AutoCloseable {
                         generatedApplication.dispatcher(),
                         config.runtime().execution().virtualThreads());
         };
+    }
+
+    private Integer sharedCpuCore() {
+        Integer messageCpu = config.runtime().messages().cpuCore();
+        return messageCpu == null ? config.runtime().control().cpuCore() : messageCpu;
+    }
+
+    private static Runnable eventLoopAffinity(Integer cpuCore) {
+        return cpuCore == null ? null : () -> CpuAffinity.setCurrentThreadAffinity(cpuCore);
     }
 
     private PartitionKeyExtractor partitionExtractor() {

@@ -409,6 +409,7 @@ import org.agrona.concurrent.IdleStrategy;
 
 public final class EventLoop implements AutoCloseable {
     public EventLoop(String name, Agent agent, IdleStrategy idleStrategy);
+    public EventLoop(String name, Agent agent, IdleStrategy idleStrategy, Runnable threadInitializer);
     public void startThread(ThreadFactory factory);
     public void close();
 }
@@ -436,6 +437,21 @@ In dedicated mode, `SchedulerAgent` is composed with the control agent on the
 control event-loop thread. In shared mode, control, scheduler, and message agents
 share the same loop. In external mode, callers drive both native control work and
 timer expiry through `RingloomRuntime.pollControl()`.
+
+Event loops can optionally be pinned to Linux CPU cores through
+`runtime.control.cpuCore` and `runtime.messages.cpuCore`. A missing value means no
+pinning. In dedicated mode the control and message event-loop threads can be
+pinned independently, including to different cores. In shared mode there is only
+one event-loop thread, so either one side may specify a core or both must specify
+the same core. In external mode the framework does not own event-loop threads and
+therefore rejects `cpuCore` settings.
+
+Pinning is applied inside the event-loop thread before agent startup, using Linux
+`sched_setaffinity`. Unsupported platforms log a warning and continue unpinned;
+Linux syscall failures stop the event loop because the configured latency
+contract was not met. Partitioned-worker handler threads are not covered by
+event-loop `cpuCore` settings; worker pinning would need a separate worker-core
+configuration.
 
 `RingloomScheduler` is backed by Agrona `DeadlineTimerWheel` and fixed-capacity
 task slots. Scheduling and cancellation are synchronized so handles can be used
