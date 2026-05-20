@@ -19,7 +19,8 @@ compile-time wiring, bootstrap, serialization, event loops, and metrics access.
    callers.
 6. Support pluggable serialization with initial SBE and Apache Fory modules.
 7. Expose RingLoom runtime metrics counters and gauges to Java applications.
-8. Keep dependencies minimal and IoC-friendly for Micronaut, Spring, Avaje, and
+8. Provide low-latency control-thread scheduling for periodic application work.
+9. Keep dependencies minimal and IoC-friendly for Micronaut, Spring, Avaje, and
    similar frameworks.
 
 Non-goals for the initial framework:
@@ -89,6 +90,7 @@ ringloom-framework-core
   EventLoop / Agrona Agent / IdleStrategy
   ClientInvoker / MessageDispatcher
   MessageExecutionPolicy / PartitionedWorker
+  RingloomScheduler / DeadlineTimerWheel
   RequestResponseRegistry
   SerializerRegistry
   Metrics facade
@@ -194,6 +196,33 @@ accepting a reusable `DirectRequestContext`, a stateless callback object, and a
 caller-managed `callbackContext`. The framework should not allocate lambdas,
 wrapper results, boxed ids, or per-request callback adapters on the hot path.
 Virtual-thread blocking methods are an ergonomic profile and may allocate.
+
+### Scheduled callbacks
+
+Control-plane or periodic application work can be registered directly through
+`RingloomRuntime.scheduler()` or generated from `@RingloomSchedule`:
+
+```java
+@RingloomServiceComponent
+public final class HousekeepingTasks {
+    @RingloomSchedule(initialDelayMillis = 1_000, fixedRateMillis = 1_000)
+    public void publishHeartbeat() {
+        // runs on the RingLoom control thread
+    }
+}
+```
+
+The annotation processor registers scheduled methods when the runtime starts.
+Methods must be public, no-argument instance methods returning `void`, with
+exactly one positive `fixedRateMillis` or `fixedDelayMillis`. Generated schedule
+registration uses source-retention metadata and does not scan annotations at
+runtime.
+
+Scheduled callbacks run on the control thread, not through message execution
+policies. This keeps timer expiry low latency and avoids adapting scheduled work
+into synthetic messages or extra queues. Applications should keep callbacks short;
+long-running work should hand off explicitly to an application-managed executor or
+send a real RingLoom message if it needs message-policy behavior.
 
 ### Message handlers
 
@@ -390,6 +419,7 @@ Common agents:
 | Agent | Uses | Work |
 |---|---|---|
 | `ControlAgent` | `RingloomService` | Calls `pollControl(limit)` to drive discovery, lifecycle callbacks, and heartbeats. |
+| `SchedulerAgent` | `RingloomScheduler` | Polls Agrona `DeadlineTimerWheel` and invokes expired callbacks on the control thread. |
 | `MessageConsumerAgent` | `MessageConsumer` | Calls `poll(ingress, limit)` and hands messages to the configured execution policy. |
 | Agrona `CompositeAgent` | multiple agents | Runs multiple agents on one thread for compact deployments. |
 | `LifecycleAgent` | runtime state | Optional startup/shutdown hooks and health transitions. |
@@ -401,6 +431,18 @@ Threading modes:
 | `dedicated` | separate control and message threads | Lowest and most predictable message latency. |
 | `shared` | one event loop runs control and message agents | Fewer threads, acceptable for smaller services. |
 | `external` | caller polls manually | IoC/container-managed event loops or tests. |
+
+In dedicated mode, `SchedulerAgent` is composed with the control agent on the
+control event-loop thread. In shared mode, control, scheduler, and message agents
+share the same loop. In external mode, callers drive both native control work and
+timer expiry through `RingloomRuntime.pollControl()`.
+
+`RingloomScheduler` is backed by Agrona `DeadlineTimerWheel` and fixed-capacity
+task slots. Scheduling and cancellation are synchronized so handles can be used
+from any application thread, while expiry and callback execution remain owned by
+the control loop. Runtime configuration controls `maxTimers`, wheel resolution,
+wheel size, initial tick allocation, and per-poll expiry limit; power-of-two wheel
+settings are validated at startup.
 
 ### Message execution modes
 

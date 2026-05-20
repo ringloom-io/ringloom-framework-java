@@ -367,6 +367,59 @@ final class RingloomFrameworkProcessorTest {
                 .contains(".complete(pending, context.correlationId(), context.templateId(), status, decoded)");
     }
 
+    @Test
+    void generatesScheduledMethodRegistration() throws Exception {
+        // Given
+        Path classes = Files.createDirectories(tempDir.resolve("schedule-classes"));
+        Path generated = Files.createDirectories(tempDir.resolve("schedule-generated"));
+
+        // When
+        boolean success = compile(
+                classes, generated, List.of(source("test.ScheduleApp", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomApplication;
+                    @RingloomApplication(service = "scheduler")
+                    public final class ScheduleApp {}
+                    """), source("test.ScheduledTasks", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomSchedule;
+                    import io.ringloom.framework.annotation.RingloomServiceComponent;
+                    @RingloomServiceComponent
+                    public final class ScheduledTasks {
+                      @RingloomSchedule(initialDelayMillis = 5, fixedRateMillis = 10)
+                      public void tick() {}
+                    }
+                    """)));
+
+        // Then
+        assertThat(success).isTrue();
+        assertThat(Files.readString(generated.resolve("test/ScheduleApp_RingloomApplication.java")))
+                .contains("public void onRuntimeStarted(RingloomRuntime runtime)")
+                .contains("runtime.scheduler().scheduleAtFixedRate(5L, 10L, java.util.concurrent.TimeUnit.MILLISECONDS")
+                .contains("ignored -> component(test.ScheduledTasks.class).tick()")
+                .contains("test.ScheduledTasks.class");
+    }
+
+    @Test
+    void rejectsInvalidScheduledMethods() throws Exception {
+        // Given
+        Path classes = Files.createDirectories(tempDir.resolve("bad-schedule-classes"));
+        Path generated = Files.createDirectories(tempDir.resolve("bad-schedule-generated"));
+
+        // When
+        boolean success = compile(classes, generated, List.of(source("test.BadSchedule", """
+                    package test;
+                    import io.ringloom.framework.annotation.RingloomSchedule;
+                    public final class BadSchedule {
+                      @RingloomSchedule
+                      void tick(String value) {}
+                    }
+                    """)));
+
+        // Then
+        assertThat(success).isFalse();
+    }
+
     private static boolean compile(Path classes, Path generated, List<SimpleJavaFileObject> sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();

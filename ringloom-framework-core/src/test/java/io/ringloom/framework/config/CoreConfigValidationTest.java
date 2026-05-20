@@ -13,13 +13,14 @@ final class CoreConfigValidationTest {
     @Test
     void normalizesRuntimeDefaults() {
         // Given / When
-        RingloomRuntimeConfig config = new RingloomRuntimeConfig(null, null, null, null, null, false);
+        RingloomRuntimeConfig config = new RingloomRuntimeConfig(null, null, null, null, null, null, false);
 
         // Then
         assertThat(config.mode()).isEqualTo(RuntimeMode.DEDICATED);
         assertThat(config.control()).isEqualTo(RingloomEventLoopConfig.defaults());
         assertThat(config.messages()).isEqualTo(RingloomEventLoopConfig.defaults());
         assertThat(config.execution().mode()).isEqualTo(MessageExecutionMode.CONSUMER_THREAD);
+        assertThat(config.scheduler()).isEqualTo(SchedulerRuntimeConfig.defaults());
         assertThat(config.requests()).isEqualTo(RequestRuntimeConfig.defaults());
     }
 
@@ -57,6 +58,26 @@ final class CoreConfigValidationTest {
         assertThatThrownBy(() -> new RequestRuntimeConfig(1, Duration.ZERO, true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("requests.defaultTimeout must be positive");
+    }
+
+    @Test
+    void rejectsInvalidSchedulerRuntimeSettings() {
+        // Given / When / Then
+        assertThatThrownBy(() -> new SchedulerRuntimeConfig(-1, 1, 1, 1, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scheduler.maxTimers must be positive");
+        assertThatThrownBy(() -> new SchedulerRuntimeConfig(1, 3, 1, 1, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scheduler.tickResolutionNanos must be a positive power of two");
+        assertThatThrownBy(() -> new SchedulerRuntimeConfig(1, 1, 3, 1, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scheduler.ticksPerWheel must be a positive power of two");
+        assertThatThrownBy(() -> new SchedulerRuntimeConfig(1, 1, 1, 3, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scheduler.initialTickAllocation must be a positive power of two");
+        assertThatThrownBy(() -> new SchedulerRuntimeConfig(1, 1, 1, 1, -1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("scheduler.pollLimit must be positive");
     }
 
     @Test

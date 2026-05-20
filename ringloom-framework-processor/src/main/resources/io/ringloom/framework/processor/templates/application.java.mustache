@@ -13,6 +13,7 @@ import java.util.List;
 
 public final class {{appName}} implements GeneratedRingloomApplication {
   private final java.util.Map<Class<?>, ?> components;
+  private java.util.Map<Class<?>, Object> resolvedComponents;
   private SerializerRegistry serializers = SerializerRegistry.EMPTY;
   private final ThreadLocal<DecodeContext> partitionDecodeContexts = ThreadLocal.withInitial(DecodeContext::new);
   private {{dispatcherName}} dispatcher;
@@ -60,9 +61,11 @@ public final class {{appName}} implements GeneratedRingloomApplication {
   @Override
   public void initializeSerializers(SerializerRegistry serializers) {
     this.serializers = java.util.Objects.requireNonNull(serializers, "serializers");
+    generatedComponents();
     generatedDispatcher().initializeSerializers(serializers);
   }
 {{{partitionKeyExtractorSources}}}
+{{{scheduleRegistrationSources}}}
 
   @Override
   public GeneratedMessageDispatcher dispatcher() {
@@ -71,8 +74,34 @@ public final class {{appName}} implements GeneratedRingloomApplication {
 
   private {{dispatcherName}} generatedDispatcher() {
     if (dispatcher == null) {
-      dispatcher = new {{dispatcherName}}(components);
+      dispatcher = new {{dispatcherName}}(generatedComponents());
     }
     return dispatcher;
+  }
+
+  private <T> T component(Class<T> type) {
+    return type.cast(generatedComponents().get(type));
+  }
+
+  private java.util.Map<Class<?>, Object> generatedComponents() {
+    if (resolvedComponents == null) {
+      java.util.Map<Class<?>, Object> resolved = new java.util.HashMap<>();
+      for (Class<?> type : componentTypes()) {
+        Object component = components.get(type);
+        resolved.put(type, component == null ? instantiate(type) : component);
+      }
+      resolvedComponents = java.util.Map.copyOf(resolved);
+    }
+    return resolvedComponents;
+  }
+
+  private static <T> T instantiate(Class<T> type) {
+    try {
+      java.lang.reflect.Constructor<T> constructor = type.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      return constructor.newInstance();
+    } catch (ReflectiveOperationException ex) {
+      throw new IllegalStateException("failed to create RingLoom component " + type.getName(), ex);
+    }
   }
 }

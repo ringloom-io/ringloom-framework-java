@@ -13,12 +13,14 @@ import io.ringloom.framework.eventloop.ControlAgent;
 import io.ringloom.framework.eventloop.EventLoop;
 import io.ringloom.framework.eventloop.IdleStrategies;
 import io.ringloom.framework.eventloop.MessageConsumerAgent;
+import io.ringloom.framework.eventloop.SchedulerAgent;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedPartitionKeyExtractor;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.request.PooledRequestResponseRegistry;
 import io.ringloom.framework.request.RequestResponseRegistry;
+import io.ringloom.framework.scheduler.RingloomScheduler;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.status.RingloomHandlerStatus;
 import io.ringloom.service.MessageConsumer;
@@ -44,6 +46,7 @@ public final class RingloomRuntime implements AutoCloseable {
     private final RingloomMetrics metrics;
     private final Logger logger;
     private final RequestResponseRegistry requestRegistry;
+    private final RingloomScheduler scheduler;
     private final Map<String, RingloomClient> lowLevelClients = new HashMap<>();
     private final Map<Class<?>, Object> generatedClients = new HashMap<>();
     private final Object shutdownMonitor = new Object();
@@ -77,6 +80,7 @@ public final class RingloomRuntime implements AutoCloseable {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.requestRegistry =
                 new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
+        this.scheduler = new RingloomScheduler(config.runtime().scheduler(), this);
     }
 
     /**
@@ -109,7 +113,17 @@ public final class RingloomRuntime implements AutoCloseable {
      */
     public int pollControl() {
         ensureStarted();
-        return service.pollControl(config.runtime().control().pollLimit());
+        int controlWork = service.pollControl(config.runtime().control().pollLimit());
+        if (config.runtime().mode() != RuntimeMode.EXTERNAL) {
+            return controlWork;
+        }
+        try {
+            return controlWork + scheduler.poll(System.nanoTime());
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("scheduled control work failed", ex);
+        }
     }
 
     /**
@@ -140,6 +154,7 @@ public final class RingloomRuntime implements AutoCloseable {
         }
         ControlAgent controlAgent =
                 new ControlAgent(service, config.runtime().control().pollLimit());
+        SchedulerAgent schedulerAgent = new SchedulerAgent(scheduler);
         MessageConsumerAgent messageAgent = new MessageConsumerAgent(
                 consumer,
                 messageExecutionPolicy,
@@ -148,7 +163,7 @@ public final class RingloomRuntime implements AutoCloseable {
         if (mode == RuntimeMode.SHARED) {
             messageLoop = new EventLoop(
                     "ringloom-shared",
-                    new CompositeAgent(controlAgent, messageAgent),
+                    new CompositeAgent(controlAgent, schedulerAgent, messageAgent),
                     IdleStrategies.create(config.runtime().messages().idleStrategy()),
                     logger);
             messageLoop.startThread(threadFactory);
@@ -156,7 +171,7 @@ public final class RingloomRuntime implements AutoCloseable {
         }
         controlLoop = new EventLoop(
                 "ringloom-control",
-                controlAgent,
+                new CompositeAgent(controlAgent, schedulerAgent),
                 IdleStrategies.create(config.runtime().control().idleStrategy()),
                 logger);
         messageLoop = new EventLoop(
@@ -244,6 +259,16 @@ public final class RingloomRuntime implements AutoCloseable {
      */
     public RequestResponseRegistry requestResponseRegistry() {
         return requestRegistry;
+    }
+
+    /**
+     * Returns the control-loop scheduler.
+     *
+     * @return the scheduler owned by this runtime
+     */
+    public RingloomScheduler scheduler() {
+        ensureStarted();
+        return scheduler;
     }
 
     /**

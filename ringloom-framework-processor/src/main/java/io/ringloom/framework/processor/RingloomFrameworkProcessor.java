@@ -7,6 +7,7 @@ import io.ringloom.framework.annotation.RingloomClient;
 import io.ringloom.framework.annotation.RingloomHandler;
 import io.ringloom.framework.annotation.RingloomPartitionKey;
 import io.ringloom.framework.annotation.RingloomRequest;
+import io.ringloom.framework.annotation.RingloomSchedule;
 import io.ringloom.framework.annotation.RingloomServiceComponent;
 import io.ringloom.framework.annotation.RoutingMode;
 import java.io.IOException;
@@ -69,7 +70,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 RingloomRequest.class.getCanonicalName(),
                 RingloomServiceComponent.class.getCanonicalName(),
                 RingloomHandler.class.getCanonicalName(),
-                RingloomPartitionKey.class.getCanonicalName());
+                RingloomPartitionKey.class.getCanonicalName(),
+                RingloomSchedule.class.getCanonicalName());
     }
 
     @Override
@@ -268,25 +270,32 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             TypeElement application, List<TypeElement> clients, List<TypeElement> components, Elements elements) {
         Map<Integer, ExecutableElement> handlerTemplateIds = new HashMap<>();
         List<Handler> handlers = new ArrayList<>();
+        List<Schedule> schedules = new ArrayList<>();
         for (TypeElement component : components) {
             for (Element enclosed : component.getEnclosedElements()) {
                 RingloomHandler annotation = enclosed.getAnnotation(RingloomHandler.class);
-                if (annotation == null) {
-                    continue;
+                if (annotation != null) {
+                    if (!(enclosed instanceof ExecutableElement method)) {
+                        continue;
+                    }
+                    validateTemplate(method, annotation.templateId());
+                    ExecutableElement previous = handlerTemplateIds.putIfAbsent(annotation.templateId(), method);
+                    if (previous != null) {
+                        error(method, "duplicate RingLoom handler template id " + annotation.templateId());
+                    }
+                    validateHandler(method, elements);
+                    handlers.add(new Handler(component, method, annotation.templateId(), partitionKey(method)));
                 }
-                if (!(enclosed instanceof ExecutableElement method)) {
-                    continue;
+                RingloomSchedule schedule = enclosed.getAnnotation(RingloomSchedule.class);
+                if (schedule != null && enclosed instanceof ExecutableElement method) {
+                    validateSchedule(method, schedule);
+                    schedules.add(new Schedule(component, method, schedule));
                 }
-                validateTemplate(method, annotation.templateId());
-                ExecutableElement previous = handlerTemplateIds.putIfAbsent(annotation.templateId(), method);
-                if (previous != null) {
-                    error(method, "duplicate RingLoom handler template id " + annotation.templateId());
-                }
-                validateHandler(method, elements);
-                handlers.add(new Handler(component, method, annotation.templateId(), partitionKey(method)));
             }
         }
         handlers.sort(Comparator.comparingInt(Handler::templateId));
+        schedules.sort(Comparator.comparing(schedule -> schedule.component().getQualifiedName() + "."
+                + schedule.method().getSimpleName()));
 
         String pkg = packageName(elements, application);
         String appSimple = application.getSimpleName().toString();
@@ -295,7 +304,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         String appName = appSimple + "_RingloomApplication";
         String providerName = appSimple + "_RingloomApplicationProvider";
         generateDispatcher(pkg, dispatcherName, handlers, application);
-        generateApplicationClass(pkg, appName, dispatcherName, service, clients, handlers, application, elements);
+        generateApplicationClass(
+                pkg, appName, dispatcherName, service, clients, components, handlers, schedules, application, elements);
         generateProvider(pkg, providerName, appName, application);
         generateServiceFile(pkg, providerName);
     }
@@ -410,7 +420,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             String dispatcherName,
             String service,
             List<TypeElement> clients,
+            List<TypeElement> components,
             List<Handler> handlers,
+            List<Schedule> schedules,
             TypeElement origin,
             Elements elements) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
@@ -449,11 +461,13 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                                     "clientBindingSources",
                                     clientBindings.toString(),
                                     "componentTypeSources",
-                                    componentTypeSources(handlers),
+                                    componentTypeSources(components),
                                     "serializerRegistrationSources",
                                     serializerRegistrationSources(clients, handlers, elements),
                                     "partitionKeyExtractorSources",
-                                    partitionKeyExtractorSources(handlers, elements))));
+                                    partitionKeyExtractorSources(handlers, elements),
+                                    "scheduleRegistrationSources",
+                                    scheduleRegistrationSources(schedules))));
         } catch (IOException ex) {
             error(origin, "failed to generate application: " + ex.getMessage());
         }
@@ -746,6 +760,27 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
+    private void validateSchedule(ExecutableElement method, RingloomSchedule schedule) {
+        if (!method.getReturnType().toString().equals("void")) {
+            error(method, "RingLoom scheduled method must return void");
+        }
+        if (!method.getParameters().isEmpty()) {
+            error(method, "RingLoom scheduled method must not declare parameters");
+        }
+        Set<Modifier> modifiers = method.getModifiers();
+        if (modifiers.contains(Modifier.STATIC) || !modifiers.contains(Modifier.PUBLIC)) {
+            error(method, "RingLoom scheduled method must be a public instance method");
+        }
+        if (schedule.initialDelayMillis() < 0) {
+            error(method, "RingLoom schedule initialDelayMillis must be non-negative");
+        }
+        boolean fixedRate = schedule.fixedRateMillis() > 0;
+        boolean fixedDelay = schedule.fixedDelayMillis() > 0;
+        if (fixedRate == fixedDelay) {
+            error(method, "RingLoom schedule requires exactly one positive fixedRateMillis or fixedDelayMillis");
+        }
+    }
+
     private PartitionKey partitionKey(ExecutableElement method) {
         RingloomPartitionKey methodKey = method.getAnnotation(RingloomPartitionKey.class);
         VariableElement annotatedParameter = null;
@@ -1013,13 +1048,19 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 result.putIfAbsent(component.getQualifiedName().toString(), component);
             }
         }
+        for (Element schedule : roundEnv.getElementsAnnotatedWith(RingloomSchedule.class)) {
+            Element enclosing = schedule.getEnclosingElement();
+            if (enclosing instanceof TypeElement component) {
+                result.putIfAbsent(component.getQualifiedName().toString(), component);
+            }
+        }
         return new ArrayList<>(result.values());
     }
 
-    private String componentTypeSources(List<Handler> handlers) {
+    private String componentTypeSources(List<TypeElement> components) {
         Map<String, String> componentTypes = new LinkedHashMap<>();
-        for (Handler handler : handlers) {
-            String type = handler.component().getQualifiedName().toString();
+        for (TypeElement component : components) {
+            String type = component.getQualifiedName().toString();
             componentTypes.putIfAbsent(type, "        " + type + ".class");
         }
         StringBuilder sources = new StringBuilder();
@@ -1031,6 +1072,38 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             }
             sources.append("\n");
         }
+        return sources.toString();
+    }
+
+    private String scheduleRegistrationSources(List<Schedule> schedules) {
+        if (schedules.isEmpty()) {
+            return "";
+        }
+        StringBuilder sources = new StringBuilder();
+        sources.append("""
+
+              @Override
+              public void onRuntimeStarted(RingloomRuntime runtime) {
+            """);
+        for (Schedule schedule : schedules) {
+            RingloomSchedule annotation = schedule.annotation();
+            String componentType = schedule.component().getQualifiedName().toString();
+            String methodName = schedule.method().getSimpleName().toString();
+            if (annotation.fixedRateMillis() > 0) {
+                sources.append("""
+                    runtime.scheduler().scheduleAtFixedRate(%dL, %dL, java.util.concurrent.TimeUnit.MILLISECONDS,
+                        ignored -> component(%s.class).%s());
+            """.formatted(
+                        annotation.initialDelayMillis(), annotation.fixedRateMillis(), componentType, methodName));
+            } else {
+                sources.append("""
+                    runtime.scheduler().scheduleWithFixedDelay(%dL, %dL, java.util.concurrent.TimeUnit.MILLISECONDS,
+                        ignored -> component(%s.class).%s());
+            """.formatted(
+                        annotation.initialDelayMillis(), annotation.fixedDelayMillis(), componentType, methodName));
+            }
+        }
+        sources.append("  }\n");
         return sources.toString();
     }
 
@@ -1067,6 +1140,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
 
     private record Handler(
             TypeElement component, ExecutableElement method, int templateId, PartitionKey partitionKey) {}
+
+    private record Schedule(TypeElement component, ExecutableElement method, RingloomSchedule annotation) {}
 
     private record PartitionKey(VariableElement parameter, String accessor) {}
 

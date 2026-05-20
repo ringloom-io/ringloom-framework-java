@@ -10,6 +10,7 @@ import java.util.Objects;
  * @param control the control-loop settings
  * @param messages the message-loop settings
  * @param execution the inbound message execution policy
+ * @param scheduler the control-loop scheduler settings
  * @param requests the request/response tracking settings
  * @param shutdownHook whether the runtime should install a JVM shutdown hook
  */
@@ -18,6 +19,7 @@ public record RingloomRuntimeConfig(
         RingloomEventLoopConfig control,
         RingloomEventLoopConfig messages,
         MessageExecutionConfig execution,
+        SchedulerRuntimeConfig scheduler,
         RequestRuntimeConfig requests,
         boolean shutdownHook) {
     public RingloomRuntimeConfig {
@@ -25,6 +27,7 @@ public record RingloomRuntimeConfig(
         control = control == null ? RingloomEventLoopConfig.defaults() : control;
         messages = messages == null ? RingloomEventLoopConfig.defaults() : messages;
         execution = execution == null ? MessageExecutionConfig.consumerThread() : execution;
+        scheduler = scheduler == null ? SchedulerRuntimeConfig.defaults() : scheduler;
         requests = requests == null ? RequestRuntimeConfig.defaults() : requests;
     }
 
@@ -34,6 +37,6 @@ public record RingloomRuntimeConfig(
      * @return the framework defaults for runtime execution
      */
     public static RingloomRuntimeConfig defaults() {
-        return new RingloomRuntimeConfig(RuntimeMode.DEDICATED, null, null, null, null, true);
+        return new RingloomRuntimeConfig(RuntimeMode.DEDICATED, null, null, null, null, null, true);
     }
 }

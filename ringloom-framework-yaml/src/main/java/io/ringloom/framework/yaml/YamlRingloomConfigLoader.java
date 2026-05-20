@@ -15,6 +15,7 @@ import io.ringloom.framework.config.RingloomRuntimeConfig;
 import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.config.RingloomServiceRuntimeConfig;
 import io.ringloom.framework.config.RuntimeMode;
+import io.ringloom.framework.config.SchedulerRuntimeConfig;
 import io.ringloom.framework.config.VirtualThreadExecutionConfig;
 import io.ringloom.framework.config.WorkerBackpressurePolicy;
 import java.io.IOException;
@@ -84,7 +85,10 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         if (values.isEmpty()) {
             return RingloomRuntimeConfig.defaults();
         }
-        requireKeys(values, "ringloom.runtime", Set.of("mode", "control", "messages", "requests", "lifecycle"));
+        requireKeys(
+                values,
+                "ringloom.runtime",
+                Set.of("mode", "control", "messages", "scheduler", "requests", "lifecycle"));
         RuntimeMode mode = enumValue(
                 RuntimeMode.class, string(values.get("mode"), "ringloom.runtime.mode"), RuntimeMode.DEDICATED);
         RingloomEventLoopConfig control = eventLoop(optionalMap(values.get("control"), "ringloom.runtime.control"));
@@ -92,12 +96,14 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         RingloomEventLoopConfig messageLoop = eventLoop(messages);
         MessageExecutionConfig execution =
                 execution(optionalMap(messages.get("execution"), "ringloom.runtime.messages.execution"));
+        SchedulerRuntimeConfig scheduler =
+                scheduler(optionalMap(values.get("scheduler"), "ringloom.runtime.scheduler"));
         RequestRuntimeConfig requests = requests(optionalMap(values.get("requests"), "ringloom.runtime.requests"));
         boolean shutdownHook = bool(
                 optionalMap(values.get("lifecycle"), "ringloom.runtime.lifecycle")
                         .get("shutdownHook"),
                 true);
-        return new RingloomRuntimeConfig(mode, control, messageLoop, execution, requests, shutdownHook);
+        return new RingloomRuntimeConfig(mode, control, messageLoop, execution, scheduler, requests, shutdownHook);
     }
 
     private static RingloomEventLoopConfig eventLoop(Map<String, Object> values) {
@@ -137,6 +143,19 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
                 Duration.ofMillis(
                         longValue(values.get("defaultTimeoutMillis"), "requests.defaultTimeoutMillis", 5_000)),
                 bool(values.get("pooledPendingRequests"), true));
+    }
+
+    private static SchedulerRuntimeConfig scheduler(Map<String, Object> values) {
+        requireKeys(
+                values,
+                "ringloom.runtime.scheduler",
+                Set.of("maxTimers", "tickResolutionNanos", "ticksPerWheel", "initialTickAllocation", "pollLimit"));
+        return new SchedulerRuntimeConfig(
+                integer(values.get("maxTimers"), "scheduler.maxTimers", 1024),
+                longValue(values.get("tickResolutionNanos"), "scheduler.tickResolutionNanos", 1_048_576L),
+                integer(values.get("ticksPerWheel"), "scheduler.ticksPerWheel", 1024),
+                integer(values.get("initialTickAllocation"), "scheduler.initialTickAllocation", 16),
+                integer(values.get("pollLimit"), "scheduler.pollLimit", 64));
     }
 
     private static RingloomSerializerConfig serializers(Map<String, Object> values) {
