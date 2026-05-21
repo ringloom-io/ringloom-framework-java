@@ -223,6 +223,19 @@ public interface RingloomMetrics {
 The facade should be injectable and should not require users to depend on the
 low-level binding package directly.
 
+## OpenTelemetry bridge
+
+`ringloom-metrics-opentelemetry` exposes native-backed `RingloomMetrics`
+samples through OpenTelemetry asynchronous instruments. The bridge accepts an
+injected `Meter` and snapshots the currently registered metric names when
+`registerExistingMetrics()` is called, or callers can explicitly register
+counters and gauges by name.
+
+The OpenTelemetry callbacks read `RingloomMetrics.sample(name)` at collection
+time. Application metric values therefore remain in native/off-heap RingLoom
+slots during hot-path updates, and Java-side allocation is paid only by the SDK
+collection/export path.
+
 ## Testing
 
 Zig tests:
@@ -246,6 +259,8 @@ Framework tests:
 
 1. `RingloomRuntime.metrics()` returns a working facade.
 2. Metrics facade can be injected manually into a test component.
+3. OpenTelemetry async counters/gauges collect the latest RingLoom sample values
+   through the optional metrics bridge.
 
 ## Acceptance criteria
 
@@ -255,3 +270,5 @@ Framework tests:
 4. Application counters/gauges can be registered and updated from Java through
    direct native metric slots without Java heap-backed metric state or per-update
    native downcalls.
+5. OpenTelemetry can export native-backed counters/gauges through async
+   instruments without a Java aggregation loop.

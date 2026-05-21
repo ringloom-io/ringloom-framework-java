@@ -19,7 +19,7 @@ Run a quick smoke benchmark:
 
 ```bash
 ./gradlew :ringloom-framework-core:jmh \
-  -PjmhArgs='ExecutionPolicyBenchmark -wi 0 -i 1 -r 100ms -f 1'
+  -PjmhArgs='GeneratedTracingHookBenchmark -wi 0 -i 1 -r 100ms -f 1'
 ```
 
 The Gradle task passes the framework's required Java 25 runtime flags to the JMH
@@ -60,6 +60,14 @@ Trace-hook overhead can be measured separately:
 ```bash
 ./gradlew :ringloom-framework-core:jmh \
   -PjmhArgs='GeneratedTracingHookBenchmark'
+```
+
+Native metric slot update overhead can be compared with a heap `LongAdder`
+baseline:
+
+```bash
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='MetricUpdateBenchmark'
 ```
 
 Each benchmark invocation dispatches a fixed batch of 16,384 messages and waits
