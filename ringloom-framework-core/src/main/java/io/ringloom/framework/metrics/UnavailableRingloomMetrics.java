@@ -15,6 +15,16 @@ public final class UnavailableRingloomMetrics implements RingloomMetrics {
     private UnavailableRingloomMetrics() {}
 
     @Override
+    public RingloomCounter registerCounter(String name) {
+        return UnavailableCounter.INSTANCE;
+    }
+
+    @Override
+    public RingloomGauge registerGauge(String name) {
+        return UnavailableGauge.INSTANCE;
+    }
+
+    @Override
     public MetricSample sample(String name) {
         throw new UnsupportedOperationException("RingLoom native metrics reader ABI is not available");
     }
@@ -27,5 +37,35 @@ public final class UnavailableRingloomMetrics implements RingloomMetrics {
     @Override
     public RingStats ringStats(String ringName) {
         throw new UnsupportedOperationException("RingLoom native metrics reader ABI is not available");
+    }
+
+    private enum UnavailableCounter implements RingloomCounter {
+        INSTANCE;
+
+        @Override
+        public int id() {
+            return -1;
+        }
+
+        @Override
+        public void increment() {}
+
+        @Override
+        public void add(long delta) {}
+
+        @Override
+        public void set(long value) {}
+    }
+
+    private enum UnavailableGauge implements RingloomGauge {
+        INSTANCE;
+
+        @Override
+        public int id() {
+            return -1;
+        }
+
+        @Override
+        public void set(long value) {}
     }
 }

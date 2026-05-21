@@ -55,6 +55,13 @@ typedef struct ringloom_metric_descriptor {
     int64_t value;
 } ringloom_metric_descriptor_t;
 
+typedef struct ringloom_metric_slot {
+    int32_t metric_id;
+    uint32_t reserved;
+    int64_t *value;
+    size_t value_len;
+} ringloom_metric_slot_t;
+
 typedef struct ringloom_ring_stats {
     uint64_t capacity_bytes;
     uint64_t used_bytes;
@@ -96,32 +103,14 @@ ringloom_status_t ringloom_service_counter_register(
     ringloom_service_t *service,
     const char *name,
     size_t name_len,
-    int32_t *out_counter_id
+    ringloom_metric_slot_t *out_slot
 );
 
 ringloom_status_t ringloom_service_gauge_register(
     ringloom_service_t *service,
     const char *name,
     size_t name_len,
-    int32_t *out_gauge_id
-);
-
-ringloom_status_t ringloom_service_counter_add(
-    ringloom_service_t *service,
-    int32_t counter_id,
-    int64_t delta
-);
-
-ringloom_status_t ringloom_service_counter_set(
-    ringloom_service_t *service,
-    int32_t counter_id,
-    int64_t value
-);
-
-ringloom_status_t ringloom_service_gauge_set(
-    ringloom_service_t *service,
-    int32_t gauge_id,
-    int64_t value
+    ringloom_metric_slot_t *out_slot
 );
 ```
 
@@ -160,8 +149,9 @@ Application metrics:
    layout.
 4. Reject empty or overlong names instead of truncating Java-provided metric
    names.
-5. Updates mutate the native memory-mapped `i64` value slots; Java must register
-   metrics at startup, not per request.
+5. Registration returns a direct native `i64` value slot; Java updates it through
+   FFM `VarHandle` operations rather than per-update native downcalls.
+6. Java must register metrics at startup, not per request.
 
 Error handling:
 
@@ -193,6 +183,7 @@ public final class RingloomService implements AutoCloseable {
 
 public final class NativeCounter {
     public int counterId();
+    public long value();
     public void increment();
     public void add(long delta);
     public void set(long value);
@@ -200,6 +191,7 @@ public final class NativeCounter {
 
 public final class NativeGauge {
     public int gaugeId();
+    public long value();
     public void set(long value);
 }
 ```
@@ -247,8 +239,8 @@ Java tests:
 2. Send/receive messages and observe counters change.
 3. Read control/messages ring stats.
 4. Closing reader is idempotent.
-5. Registering Java counters/gauges stores off-heap native metric slots.
-6. Counter/gauge updates are visible through `RingloomMetricsReader`.
+5. Registering Java counters/gauges returns direct off-heap native metric slots.
+6. Counter/gauge `VarHandle` updates are visible through `RingloomMetricsReader`.
 
 Framework tests:
 
@@ -260,5 +252,6 @@ Framework tests:
 1. Java can read native RingLoom service counters.
 2. Java can read derived service ring gauges.
 3. No new metric aggregation is added to native hot paths.
-4. Application counters/gauges can be registered and updated from Java without
-   Java heap-backed metric state.
+4. Application counters/gauges can be registered and updated from Java through
+   direct native metric slots without Java heap-backed metric state or per-update
+   native downcalls.

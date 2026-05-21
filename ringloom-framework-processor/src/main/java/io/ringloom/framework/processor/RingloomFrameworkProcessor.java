@@ -199,7 +199,7 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
             StringBuilder methods = new StringBuilder();
             for (Element enclosed : client.getEnclosedElements()) {
                 if (enclosed.getKind() == ElementKind.METHOD) {
-                    methods.append(clientMethodSource((ExecutableElement) enclosed, elements));
+                    methods.append(clientMethodSource(client, (ExecutableElement) enclosed, elements));
                 }
             }
             writeSourceFile(
@@ -214,6 +214,9 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                                     generatedName,
                                     "simpleName",
                                     simpleName,
+                                    "targetServiceName",
+                                    escape(client.getAnnotation(RingloomClient.class)
+                                            .service()),
                                     "methodSources",
                                     methods.toString())));
         } catch (IOException ex) {
@@ -221,7 +224,8 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
         }
     }
 
-    private String clientMethodSource(ExecutableElement method, Elements elements) throws IOException {
+    private String clientMethodSource(TypeElement client, ExecutableElement method, Elements elements)
+            throws IOException {
         RingloomRequest request = method.getAnnotation(RingloomRequest.class);
         VariableElement payload = clientPayloadParameter(method);
         String payloadType = payload.asType().toString();
@@ -238,6 +242,12 @@ public final class RingloomFrameworkProcessor extends AbstractProcessor {
                 request.responseTemplateId(),
                 "responseType",
                 method.getReturnType().toString(),
+                "routingMode",
+                request.routing().name(),
+                "clientName",
+                client.getSimpleName().toString(),
+                "targetServiceName",
+                escape(client.getAnnotation(RingloomClient.class).service()),
                 "serializer",
                 escape(request.serializer()));
         if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {

@@ -16,7 +16,17 @@
     } catch (RuntimeException ex) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
-    int status = lowLevelClient.tryClaimToRequest(
+    ClientTraceContext traceContext = null;
+    io.ringloom.framework.tracing.TraceScope traceScope = null;
+    int status = RingloomHandlerStatus.SERIALIZATION_ERROR;
+    if (tracingEnabled
+        && traceAdapter.shouldTraceSend(
+            CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
+      traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+      traceScope = traceAdapter.onSendStart(traceContext);
+    }
+    try {
+      status = lowLevelClient.tryClaimToRequest(
         replyTo.sourceNodeId(),
         replyTo.sourceServiceId(),
         {{templateId}},
@@ -28,9 +38,17 @@
     }
     try {
       encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(replyClaim.payloadSegment()), requestEncodeContext);
-      return replyClaim.commit();
+        status = replyClaim.commit();
+        return status;
     } catch (RuntimeException ex) {
       replyClaim.abort();
+        status = RingloomHandlerStatus.SERIALIZATION_ERROR;
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+    } finally {
+      if (traceContext != null) {
+        traceAdapter.onSendComplete(traceContext, status);
+        traceScope.close();
+      }
     }
   }

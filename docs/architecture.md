@@ -818,6 +818,13 @@ typedef struct ringloom_metric_descriptor {
     int64_t value;
 } ringloom_metric_descriptor_t;
 
+typedef struct ringloom_metric_slot {
+    int32_t metric_id;
+    uint32_t reserved;
+    int64_t *value;
+    size_t value_len;
+} ringloom_metric_slot_t;
+
 typedef struct ringloom_ring_stats {
     uint64_t capacity_bytes;
     uint64_t used_bytes;
@@ -876,39 +883,23 @@ ringloom_status_t ringloom_service_counter_register(
     ringloom_service_t *service,
     const char *name,
     size_t name_len,
-    int32_t *out_counter_id
+    ringloom_metric_slot_t *out_slot
 );
 
 ringloom_status_t ringloom_service_gauge_register(
     ringloom_service_t *service,
     const char *name,
     size_t name_len,
-    int32_t *out_gauge_id
-);
-
-ringloom_status_t ringloom_service_counter_add(
-    ringloom_service_t *service,
-    int32_t counter_id,
-    int64_t delta
-);
-
-ringloom_status_t ringloom_service_counter_set(
-    ringloom_service_t *service,
-    int32_t counter_id,
-    int64_t value
-);
-
-ringloom_status_t ringloom_service_gauge_set(
-    ringloom_service_t *service,
-    int32_t gauge_id,
-    int64_t value
+    ringloom_metric_slot_t *out_slot
 );
 ```
 
 Metric names must be non-empty and fit in the native metadata label field. The
 Zig side publishes metric metadata before exposing the slot as allocated so
-readers never observe partially initialized names or kinds. Runtime unregister
-and high-cardinality label APIs are intentionally out of scope.
+readers never observe partially initialized names or kinds. Registration returns
+a direct native `i64` value slot for Java FFM `VarHandle` updates, so
+application metric updates do not pay per-update native downcalls. Runtime
+unregister and high-cardinality label APIs are intentionally out of scope.
 
 ## IoC integration
 

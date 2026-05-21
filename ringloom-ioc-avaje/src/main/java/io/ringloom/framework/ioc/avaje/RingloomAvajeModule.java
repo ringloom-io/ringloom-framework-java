@@ -21,6 +21,8 @@ import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.request.RequestResponseRegistry;
 import io.ringloom.framework.serialization.SerializerModule;
 import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.tracing.NoopTraceAdapter;
+import io.ringloom.framework.tracing.TraceAdapter;
 import io.ringloom.service.RingloomMessage;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
@@ -48,13 +50,14 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
     private final GeneratedRingloomApplication suppliedGeneratedApplication;
     private final SerializerRegistry suppliedSerializers;
     private final RingloomMetrics suppliedMetrics;
+    private final TraceAdapter suppliedTraceAdapter;
     private final Logger suppliedLogger;
 
     /**
      * Creates an Avaje module that resolves dependencies from the BeanScope builder.
      */
     public RingloomAvajeModule() {
-        this(null, null, null, null, null, null);
+        this(null, null, null, null, null, null, null);
     }
 
     /**
@@ -63,7 +66,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
      * @param moduleConfig the adapter configuration
      */
     public RingloomAvajeModule(RingloomAvajeConfig moduleConfig) {
-        this(moduleConfig, null, null, null, null, null);
+        this(moduleConfig, null, null, null, null, null, null);
     }
 
     /**
@@ -77,7 +80,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             RingloomApplicationConfig config,
             GeneratedRingloomApplication generatedApplication,
             SerializerRegistry serializers) {
-        this(RingloomAvajeConfig.defaults(), config, generatedApplication, serializers, null, null);
+        this(RingloomAvajeConfig.defaults(), config, generatedApplication, serializers, null, null, null);
     }
 
     private RingloomAvajeModule(
@@ -86,12 +89,14 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             GeneratedRingloomApplication suppliedGeneratedApplication,
             SerializerRegistry suppliedSerializers,
             RingloomMetrics suppliedMetrics,
+            TraceAdapter suppliedTraceAdapter,
             Logger suppliedLogger) {
         this.moduleConfig = moduleConfig;
         this.suppliedConfig = suppliedConfig;
         this.suppliedGeneratedApplication = suppliedGeneratedApplication;
         this.suppliedSerializers = suppliedSerializers;
         this.suppliedMetrics = suppliedMetrics;
+        this.suppliedTraceAdapter = suppliedTraceAdapter;
         this.suppliedLogger = suppliedLogger;
     }
 
@@ -101,6 +106,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             RingloomAvajeConfig.class,
             RingloomApplicationConfig.class,
             SerializerRegistry.class,
+            TraceAdapter.class,
             GeneratedRingloomApplication.class,
             RingloomRuntime.class,
             RingloomApplicationRunner.class,
@@ -135,11 +141,13 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         registerAbsent(builder, SerializerRegistry.class, serializers);
 
         RingloomMetrics metrics = resolveMetrics(builder);
-        registerAbsent(builder, RingloomMetrics.class, metrics);
+        TraceAdapter traceAdapter = resolveTraceAdapter(builder);
+        registerAbsent(builder, TraceAdapter.class, traceAdapter);
 
         RingloomRuntime runtime =
-                new RingloomRuntime(config, generatedApplication, serializers, metrics, resolveLogger());
+                new RingloomRuntime(config, generatedApplication, serializers, metrics, traceAdapter, resolveLogger());
         runtimeReference.set(runtime);
+        registerAbsent(builder, RingloomMetrics.class, runtime.metrics());
         registerAbsent(builder, RingloomRuntime.class, runtime);
 
         RingloomApplicationRunner application = new RingloomApplicationRunner(
@@ -180,6 +188,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         return RingloomBootstrap.fromConfig(suppliedConfig)
                 .generatedApplication(suppliedGeneratedApplication)
                 .serializerRegistry(suppliedSerializers)
+                .traceAdapter(resolveTraceAdapter(null))
                 .start();
     }
 
@@ -325,6 +334,15 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             return suppliedMetrics;
         }
         return builder.getOptional(RingloomMetrics.class).orElse(UnavailableRingloomMetrics.INSTANCE);
+    }
+
+    private TraceAdapter resolveTraceAdapter(Builder builder) {
+        if (suppliedTraceAdapter != null) {
+            return suppliedTraceAdapter;
+        }
+        return builder == null
+                ? NoopTraceAdapter.INSTANCE
+                : builder.getOptional(TraceAdapter.class).orElse(NoopTraceAdapter.INSTANCE);
     }
 
     private Logger resolveLogger() {

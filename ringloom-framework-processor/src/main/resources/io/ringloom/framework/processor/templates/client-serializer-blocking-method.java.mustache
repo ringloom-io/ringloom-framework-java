@@ -48,41 +48,61 @@
         runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.SERIALIZATION_ERROR);
         throw new RingloomRequestException("request encoding failed", RingloomHandlerStatus.SERIALIZATION_ERROR);
       }
-      try (BufferClaim requestClaim = lowLevelClient.newClaim()) {
-        int status = lowLevelClient.tryClaimRequest({{templateId}}, pending.correlationId(), payloadLength, requestClaim);
-        if (status != RingloomStatus.OK) {
-          runtime.requestResponseRegistry().cancel(pending, status);
-          throw new RingloomRequestException("request send failed", status);
-        }
-        try {
-          encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(requestClaim.payloadSegment()), requestEncodeContext);
-        } catch (RuntimeException ex) {
-          requestClaim.abort();
-          runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.SERIALIZATION_ERROR);
-          throw new RingloomRequestException("request encoding failed", RingloomHandlerStatus.SERIALIZATION_ERROR);
-        }
-        status = requestClaim.commit();
-        if (status != RingloomStatus.OK) {
-          runtime.requestResponseRegistry().cancel(pending, status);
-          throw new RingloomRequestException("request commit failed", status);
-        }
+      ClientTraceContext traceContext = null;
+      io.ringloom.framework.tracing.TraceScope traceScope = null;
+      int status = RingloomHandlerStatus.SERIALIZATION_ERROR;
+      if (tracingEnabled
+          && traceAdapter.shouldTraceSend(
+              CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
+        traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+        traceScope = traceAdapter.onSendStart(traceContext);
       }
       try {
-        if (!awaiter.awaitNanos(timeoutNanos)) {
-          int cancelStatus = runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.REQUEST_TIMEOUT);
-          if (cancelStatus == RingloomHandlerStatus.REQUEST_TIMEOUT) {
-            throw new RingloomRequestException("request timed out", RingloomHandlerStatus.REQUEST_TIMEOUT);
+        try (BufferClaim requestClaim = lowLevelClient.newClaim()) {
+          status = lowLevelClient.tryClaimRequest({{templateId}}, pending.correlationId(), payloadLength, requestClaim);
+          if (status != RingloomStatus.OK) {
+            runtime.requestResponseRegistry().cancel(pending, status);
+            throw new RingloomRequestException("request send failed", status);
+          }
+          try {
+            encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(requestClaim.payloadSegment()), requestEncodeContext);
+          } catch (RuntimeException ex) {
+            requestClaim.abort();
+            status = RingloomHandlerStatus.SERIALIZATION_ERROR;
+            runtime.requestResponseRegistry().cancel(pending, status);
+            throw new RingloomRequestException("request encoding failed", status);
+          }
+          status = requestClaim.commit();
+          if (status != RingloomStatus.OK) {
+            runtime.requestResponseRegistry().cancel(pending, status);
+            throw new RingloomRequestException("request commit failed", status);
           }
         }
-      } catch (InterruptedException ex) {
-        runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.REQUEST_CANCELLED);
-        throw ex;
+        try {
+          if (!awaiter.awaitNanos(timeoutNanos)) {
+            status = RingloomHandlerStatus.REQUEST_TIMEOUT;
+            int cancelStatus = runtime.requestResponseRegistry().cancel(pending, status);
+            if (cancelStatus == RingloomHandlerStatus.REQUEST_TIMEOUT) {
+              throw new RingloomRequestException("request timed out", RingloomHandlerStatus.REQUEST_TIMEOUT);
+            }
+          }
+        } catch (InterruptedException ex) {
+          status = RingloomHandlerStatus.REQUEST_CANCELLED;
+          runtime.requestResponseRegistry().cancel(pending, status);
+          throw ex;
+        }
+        int completionStatus = pending.completionStatus();
+        if (completionStatus != RingloomHandlerStatus.OK) {
+          status = completionStatus;
+          throw new RingloomRequestException("request failed", completionStatus);
+        }
+        return ({{{responseType}}}) pending.responseValue();
+      } finally {
+        if (traceContext != null) {
+          traceAdapter.onSendComplete(traceContext, status);
+          traceScope.close();
+        }
       }
-      int completionStatus = pending.completionStatus();
-      if (completionStatus != RingloomHandlerStatus.OK) {
-        throw new RingloomRequestException("request failed", completionStatus);
-      }
-      return ({{{responseType}}}) pending.responseValue();
     } finally {
       runtime.requestResponseRegistry().release(pending);
     }

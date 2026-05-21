@@ -8,6 +8,8 @@ import io.ringloom.framework.generated.GeneratedRingloomApplicationProvider;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.tracing.NoopTraceAdapter;
+import io.ringloom.framework.tracing.TraceAdapter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,6 +28,7 @@ public final class RingloomBootstrap {
     private GeneratedRingloomApplication generatedApplication;
     private SerializerRegistry serializers = SerializerRegistry.EMPTY;
     private RingloomMetrics metrics = UnavailableRingloomMetrics.INSTANCE;
+    private TraceAdapter traceAdapter = NoopTraceAdapter.INSTANCE;
     private Logger logger = LoggerFactory.getLogger(RingloomRuntime.class);
 
     private RingloomBootstrap(RingloomApplicationConfig config) {
@@ -107,6 +110,17 @@ public final class RingloomBootstrap {
     }
 
     /**
+     * Supplies the tracing adapter used by generated clients and handlers.
+     *
+     * @param traceAdapter the tracing adapter
+     * @return this bootstrap
+     */
+    public RingloomBootstrap traceAdapter(TraceAdapter traceAdapter) {
+        this.traceAdapter = Objects.requireNonNull(traceAdapter, "traceAdapter");
+        return this;
+    }
+
+    /**
      * Overrides the logger used by runtime components created through this bootstrap.
      *
      * @param logger the logger to use
@@ -132,7 +146,8 @@ public final class RingloomBootstrap {
                     + config.service().name());
         }
         SerializerRegistry resolvedSerializers = resolveSerializers(generated);
-        RingloomRuntime runtime = new RingloomRuntime(config, generated, resolvedSerializers, metrics, logger);
+        RingloomRuntime runtime =
+                new RingloomRuntime(config, generated, resolvedSerializers, metrics, traceAdapter, logger);
         runtime.start();
         runtime.startEventLoops(Thread.ofPlatform().name("ringloom-java-", 0).factory());
         return new RingloomApplicationRunner(runtime, config.runtime().shutdownHook(), generated.serviceName());

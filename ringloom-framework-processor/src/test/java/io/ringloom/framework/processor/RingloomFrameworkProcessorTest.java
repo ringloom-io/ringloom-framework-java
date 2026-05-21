@@ -65,6 +65,13 @@ final class RingloomFrameworkProcessorTest {
         assertThat(success).isTrue();
         assertThat(generated.resolve("test/PricingClient_RingloomClient.java")).exists();
         assertThat(generated.resolve("test/OrdersApp_RingloomApplication.java")).exists();
+        assertThat(Files.readString(generated.resolve("test/PricingClient_RingloomClient.java")))
+                .contains("runtime.traceAdapter()")
+                .contains("shouldTraceSend(")
+                .contains("traceAdapter.onSendComplete(traceContext, status)");
+        assertThat(Files.readString(generated.resolve("test/OrdersApp_RingloomDispatcher.java")))
+                .contains("tracedDispatchMessage(context)")
+                .contains("traceAdapter.onHandlerComplete(context, status)");
         assertThat(classes.resolve(
                         "META-INF/services/io.ringloom.framework.generated.GeneratedRingloomApplicationProvider"))
                 .exists();

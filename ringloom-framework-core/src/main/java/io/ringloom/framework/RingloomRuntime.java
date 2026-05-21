@@ -18,11 +18,15 @@ import io.ringloom.framework.eventloop.SchedulerAgent;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.metrics.RingloomMetrics;
+import io.ringloom.framework.metrics.RuntimeRingloomMetrics;
+import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.request.PooledRequestResponseRegistry;
 import io.ringloom.framework.request.RequestResponseRegistry;
 import io.ringloom.framework.scheduler.RingloomScheduler;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.framework.tracing.NoopTraceAdapter;
+import io.ringloom.framework.tracing.TraceAdapter;
 import io.ringloom.service.MessageConsumer;
 import io.ringloom.service.MessageHandler;
 import io.ringloom.service.RingloomClient;
@@ -47,6 +51,8 @@ public final class RingloomRuntime implements AutoCloseable {
     private final GeneratedRingloomApplication generatedApplication;
     private final SerializerRegistry serializers;
     private final RingloomMetrics metrics;
+    private final TraceAdapter traceAdapter;
+    private final boolean tracingEnabled;
     private final Logger logger;
     private final RequestResponseRegistry requestRegistry;
     private final RingloomScheduler scheduler;
@@ -80,10 +86,34 @@ public final class RingloomRuntime implements AutoCloseable {
             SerializerRegistry serializers,
             RingloomMetrics metrics,
             Logger logger) {
+        this(config, generatedApplication, serializers, metrics, NoopTraceAdapter.INSTANCE, logger);
+    }
+
+    /**
+     * Creates a runtime for a generated application, configuration, and tracing adapter.
+     *
+     * @param config the application configuration
+     * @param generatedApplication the generated application metadata
+     * @param serializers the serializer registry available to generated code
+     * @param metrics the metrics facade to expose
+     * @param traceAdapter the tracing adapter used by generated clients and handlers
+     * @param logger the logger used by runtime components
+     */
+    public RingloomRuntime(
+            RingloomApplicationConfig config,
+            GeneratedRingloomApplication generatedApplication,
+            SerializerRegistry serializers,
+            RingloomMetrics metrics,
+            TraceAdapter traceAdapter,
+            Logger logger) {
         this.config = Objects.requireNonNull(config, "config");
         this.generatedApplication = Objects.requireNonNull(generatedApplication, "generatedApplication");
         this.serializers = Objects.requireNonNull(serializers, "serializers");
-        this.metrics = Objects.requireNonNull(metrics, "metrics");
+        this.metrics = metrics == UnavailableRingloomMetrics.INSTANCE
+                ? new RuntimeRingloomMetrics()
+                : Objects.requireNonNull(metrics, "metrics");
+        this.traceAdapter = Objects.requireNonNull(traceAdapter, "traceAdapter");
+        this.tracingEnabled = traceAdapter != NoopTraceAdapter.INSTANCE;
         this.logger = Objects.requireNonNull(logger, "logger");
         this.requestRegistry =
                 new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
@@ -103,6 +133,9 @@ public final class RingloomRuntime implements AutoCloseable {
         }
         startupStartedNanos = System.nanoTime();
         service = RingloomService.start(config.service().toLowLevelConfig());
+        if (metrics instanceof RuntimeRingloomMetrics runtimeMetrics) {
+            runtimeMetrics.attach(service);
+        }
         consumer = service.messageConsumer();
         for (GeneratedClientBinding<?> binding : generatedApplication.clients()) {
             RingloomClient lowLevel = service.createClient(binding.targetServiceName());
@@ -294,6 +327,24 @@ public final class RingloomRuntime implements AutoCloseable {
     }
 
     /**
+     * Returns whether generated tracing hooks should call the trace adapter.
+     *
+     * @return {@code true} when tracing is enabled
+     */
+    public boolean tracingEnabled() {
+        return tracingEnabled;
+    }
+
+    /**
+     * Returns the trace adapter used by generated clients and handlers.
+     *
+     * @return the trace adapter
+     */
+    public TraceAdapter traceAdapter() {
+        return traceAdapter;
+    }
+
+    /**
      * Stops the runtime and releases native resources.
      */
     @Override
@@ -309,6 +360,9 @@ public final class RingloomRuntime implements AutoCloseable {
             closeQuietly(controlLoop, "control event loop");
             closeQuietly(messageExecutionPolicy, "message execution policy");
             requestRegistry.completeAll(RingloomHandlerStatus.SHUTDOWN);
+            if (metrics instanceof RuntimeRingloomMetrics runtimeMetrics) {
+                closeQuietly(runtimeMetrics, "metrics");
+            }
             closeQuietly(consumer, "message consumer");
             for (RingloomClient client : lowLevelClients.values()) {
                 closeQuietly(client, "client");

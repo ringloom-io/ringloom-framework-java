@@ -15,15 +15,33 @@
     } catch (RuntimeException ex) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
-    int status = lowLevelClient.tryClaim({{templateId}}, payloadLength, claim);
+    ClientTraceContext traceContext = null;
+    io.ringloom.framework.tracing.TraceScope traceScope = null;
+    int status = RingloomHandlerStatus.SERIALIZATION_ERROR;
+    if (tracingEnabled
+        && traceAdapter.shouldTraceSend(
+            CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
+      traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+      traceScope = traceAdapter.onSendStart(traceContext);
+    }
+    try {
+      status = lowLevelClient.tryClaim({{templateId}}, payloadLength, claim);
     if (status != RingloomStatus.OK) {
       return status;
     }
     try {
       encoder.encode({{payloadName}}, encodeContext.buffer().wrap(claim.payloadSegment()), encodeContext);
-      return claim.commit();
+        status = claim.commit();
+        return status;
     } catch (RuntimeException ex) {
       claim.abort();
+        status = RingloomHandlerStatus.SERIALIZATION_ERROR;
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+    } finally {
+      if (traceContext != null) {
+        traceAdapter.onSendComplete(traceContext, status);
+        traceScope.close();
+      }
     }
   }

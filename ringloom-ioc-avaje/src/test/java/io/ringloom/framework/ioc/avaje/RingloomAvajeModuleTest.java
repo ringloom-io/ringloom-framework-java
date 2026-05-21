@@ -19,7 +19,6 @@ import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.metrics.RingloomMetrics;
-import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.request.RequestResponseRegistry;
 import io.ringloom.framework.serialization.EncodeContext;
 import io.ringloom.framework.serialization.MessageEncoder;
@@ -52,7 +51,8 @@ final class RingloomAvajeModuleTest {
             assertThat(scope.get(GeneratedMessageDispatcher.class)).isNotNull();
             assertThat(scope.get(SerializerRegistry.class).encoder("missing", String.class))
                     .isNull();
-            assertThat(scope.get(RingloomMetrics.class)).isSameAs(UnavailableRingloomMetrics.INSTANCE);
+            assertThat(scope.get(RingloomMetrics.class))
+                    .isSameAs(scope.get(RingloomRuntime.class).metrics());
             assertThat(scope.get(RingloomRuntime.class))
                     .isSameAs(scope.get(RingloomApplicationRunner.class).runtime());
             assertThat(scope.get(RequestResponseRegistry.class))

@@ -38,6 +38,28 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
     if (responseStatus != RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID) {
       return responseStatus;
     }
+    if (context.runtime() != null
+        && context.runtime().tracingEnabled()
+        && context.runtime().traceAdapter().shouldTraceReceive(context)) {
+      return tracedDispatchMessage(context);
+    }
+    return dispatchMessage(context);
+  }
+
+  private int tracedDispatchMessage(MessageContext context) {
+    io.ringloom.framework.tracing.TraceAdapter traceAdapter = context.runtime().traceAdapter();
+    io.ringloom.framework.tracing.TraceScope traceScope = traceAdapter.onReceiveStart(context);
+    int status = RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
+    try {
+      status = dispatchMessage(context);
+      return status;
+    } finally {
+      traceAdapter.onHandlerComplete(context, status);
+      traceScope.close();
+    }
+  }
+
+  private int dispatchMessage(MessageContext context) {
     return switch (context.templateId()) {
 {{{caseSources}}}      default -> RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
     };

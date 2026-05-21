@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
 import io.ringloom.framework.config.IdleStrategyKind;
+import io.ringloom.framework.config.RingloomApplicationConfig;
 import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.eventloop.IdleStrategies;
@@ -18,6 +19,8 @@ import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.framework.tracing.ClientTraceContext;
 import io.ringloom.framework.tracing.NoopTraceAdapter;
+import io.ringloom.framework.tracing.TraceAdapter;
+import io.ringloom.framework.tracing.TraceScope;
 import io.ringloom.service.RingloomMessage;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -140,11 +143,57 @@ final class CoreFrameworkDefaultsTest {
         MessageContext messageContext = new MessageContext();
 
         // When / Then
+        assertThat(adapter.shouldTraceSend("client", "orders", 1, null, 8)).isFalse();
+        assertThat(adapter.shouldTraceReceive(messageContext)).isFalse();
         assertThat(adapter.onSendStart(clientContext)).isSameAs(adapter.onSendStart(clientContext));
         assertThat(adapter.onReceiveStart(messageContext)).isSameAs(adapter.onReceiveStart(messageContext));
         assertThatCode(() -> adapter.onSendStart(clientContext).close()).doesNotThrowAnyException();
         assertThatCode(() -> adapter.onSendComplete(clientContext, 0)).doesNotThrowAnyException();
         assertThatCode(() -> adapter.onHandlerComplete(messageContext, 0)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void runtimeTracingDefaultsToNoopAndAcceptsTraceAdapters() {
+        // Given
+        GeneratedRingloomApplication application = generatedApplication();
+        TraceAdapter adapter = new TraceAdapter() {
+            @Override
+            public TraceScope onSendStart(ClientTraceContext context) {
+                return () -> {};
+            }
+
+            @Override
+            public TraceScope onReceiveStart(MessageContext context) {
+                return () -> {};
+            }
+
+            @Override
+            public void onSendComplete(ClientTraceContext context, int status) {}
+
+            @Override
+            public void onHandlerComplete(MessageContext context, int status) {}
+        };
+
+        // When
+        RingloomRuntime defaultRuntime = new RingloomRuntime(
+                RingloomApplicationConfig.minimal("orders"),
+                application,
+                SerializerRegistry.EMPTY,
+                UnavailableRingloomMetrics.INSTANCE,
+                mock(org.slf4j.Logger.class));
+        RingloomRuntime tracedRuntime = new RingloomRuntime(
+                RingloomApplicationConfig.minimal("orders"),
+                application,
+                SerializerRegistry.EMPTY,
+                UnavailableRingloomMetrics.INSTANCE,
+                adapter,
+                mock(org.slf4j.Logger.class));
+
+        // Then
+        assertThat(defaultRuntime.tracingEnabled()).isFalse();
+        assertThat(defaultRuntime.traceAdapter()).isSameAs(NoopTraceAdapter.INSTANCE);
+        assertThat(tracedRuntime.tracingEnabled()).isTrue();
+        assertThat(tracedRuntime.traceAdapter()).isSameAs(adapter);
     }
 
     @Test
@@ -154,11 +203,35 @@ final class CoreFrameworkDefaultsTest {
 
         // When / Then
         assertThat(metrics.samples()).isEmpty();
+        assertThat(metrics.registerCounter("messages").id()).isEqualTo(-1);
+        assertThatCode(() -> metrics.registerCounter("messages").increment()).doesNotThrowAnyException();
+        assertThat(metrics.registerGauge("queue-depth").id()).isEqualTo(-1);
+        assertThatCode(() -> metrics.registerGauge("queue-depth").set(1)).doesNotThrowAnyException();
         assertThatThrownBy(() -> metrics.sample("messages"))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("RingLoom native metrics reader ABI is not available");
         assertThatThrownBy(() -> metrics.ringStats("control"))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessage("RingLoom native metrics reader ABI is not available");
+    }
+
+    private static GeneratedRingloomApplication generatedApplication() {
+        GeneratedMessageDispatcher dispatcher = (message, context) -> 0;
+        return new GeneratedRingloomApplication() {
+            @Override
+            public String serviceName() {
+                return "orders";
+            }
+
+            @Override
+            public List<io.ringloom.framework.generated.GeneratedClientBinding<?>> clients() {
+                return List.of();
+            }
+
+            @Override
+            public GeneratedMessageDispatcher dispatcher() {
+                return dispatcher;
+            }
+        };
     }
 }

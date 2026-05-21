@@ -3,13 +3,24 @@
   public int {{methodName}}({{{payloadType}}} {{payloadName}}, MessageContext replyTo) {
     java.util.Objects.requireNonNull(replyTo, "replyTo");
     MemorySegment segment = {{payloadName}} == null ? MemorySegment.NULL : {{payloadName}};
+    long payloadLength = segment.byteSize();
+    ClientTraceContext traceContext = null;
+    io.ringloom.framework.tracing.TraceScope traceScope = null;
+    int status = RingloomStatus.OK;
+    if (tracingEnabled
+        && traceAdapter.shouldTraceSend(
+            CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
+      traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+      traceScope = traceAdapter.onSendStart(traceContext);
+    }
+    try {
     BufferClaim replyClaim = claims.get();
-    int status = lowLevelClient.tryClaimToRequest(
+      status = lowLevelClient.tryClaimToRequest(
         replyTo.sourceNodeId(),
         replyTo.sourceServiceId(),
         {{templateId}},
         replyTo.correlationId(),
-        segment.byteSize(),
+          payloadLength,
         replyClaim);
     if (status != RingloomStatus.OK) {
       return status;
@@ -21,6 +32,13 @@
         replyClaim.payloadSegment(),
         ValueLayout.JAVA_BYTE,
         0,
-        segment.byteSize());
-    return replyClaim.commit();
+          payloadLength);
+      status = replyClaim.commit();
+      return status;
+    } finally {
+      if (traceContext != null) {
+        traceAdapter.onSendComplete(traceContext, status);
+        traceScope.close();
+      }
+    }
   }
