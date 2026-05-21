@@ -38,6 +38,7 @@ as a Gradle multi-project build.
 | `ringloom-serializer-sbe` | SBE/Agrona-oriented serializer primitives and `MemorySegment` buffer adapters for low-allocation message paths. |
 | `ringloom-serializer-fory` | Apache Fory serializer module for ergonomic POJO serialization. |
 | `ringloom-ioc-avaje` | Avaje Inject integration for registering RingLoom runtime, generated metadata, serializers, metrics, request registry, dispatcher, and generated clients as beans. |
+| `ringloom-tracing-opentelemetry` | Optional OpenTelemetry `TraceAdapter` for sampled local send/receive spans. |
 
 ## Requirements
 

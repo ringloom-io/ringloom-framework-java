@@ -16,6 +16,9 @@ import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.config.RingloomServiceRuntimeConfig;
 import io.ringloom.framework.config.RuntimeMode;
 import io.ringloom.framework.config.SchedulerRuntimeConfig;
+import io.ringloom.framework.config.TracingPropagationMode;
+import io.ringloom.framework.config.TracingRuntimeConfig;
+import io.ringloom.framework.config.TracingSamplerKind;
 import io.ringloom.framework.config.VirtualThreadExecutionConfig;
 import io.ringloom.framework.config.WorkerBackpressurePolicy;
 import java.io.IOException;
@@ -88,7 +91,7 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         requireKeys(
                 values,
                 "ringloom.runtime",
-                Set.of("mode", "control", "messages", "scheduler", "requests", "lifecycle"));
+                Set.of("mode", "control", "messages", "scheduler", "requests", "lifecycle", "tracing"));
         RuntimeMode mode = enumValue(
                 RuntimeMode.class, string(values.get("mode"), "ringloom.runtime.mode"), RuntimeMode.DEDICATED);
         RingloomEventLoopConfig control = eventLoop(optionalMap(values.get("control"), "ringloom.runtime.control"));
@@ -103,7 +106,9 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
                 optionalMap(values.get("lifecycle"), "ringloom.runtime.lifecycle")
                         .get("shutdownHook"),
                 true);
-        return new RingloomRuntimeConfig(mode, control, messageLoop, execution, scheduler, requests, shutdownHook);
+        TracingRuntimeConfig tracing = tracing(optionalMap(values.get("tracing"), "ringloom.runtime.tracing"));
+        return new RingloomRuntimeConfig(
+                mode, control, messageLoop, execution, scheduler, requests, shutdownHook, tracing);
     }
 
     private static RingloomEventLoopConfig eventLoop(Map<String, Object> values) {
@@ -157,6 +162,19 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
                 integer(values.get("ticksPerWheel"), "scheduler.ticksPerWheel", 1024),
                 integer(values.get("initialTickAllocation"), "scheduler.initialTickAllocation", 16),
                 integer(values.get("pollLimit"), "scheduler.pollLimit", 64));
+    }
+
+    private static TracingRuntimeConfig tracing(Map<String, Object> values) {
+        requireKeys(
+                values,
+                "ringloom.runtime.tracing",
+                Set.of("enabled", "sampler", "sampleRatio", "propagation", "includeDecodeTime"));
+        return new TracingRuntimeConfig(
+                bool(values.get("enabled"), false),
+                sampler(string(values.get("sampler"), "ringloom.runtime.tracing.sampler")),
+                doubleValue(values.get("sampleRatio"), "ringloom.runtime.tracing.sampleRatio", 0.0),
+                propagation(string(values.get("propagation"), "ringloom.runtime.tracing.propagation")),
+                bool(values.get("includeDecodeTime"), true));
     }
 
     private static RingloomSerializerConfig serializers(Map<String, Object> values) {
@@ -263,6 +281,16 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         return number.longValue();
     }
 
+    private static double doubleValue(Object value, String path, double defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException(path + " must be a number");
+        }
+        return number.doubleValue();
+    }
+
     private static boolean bool(Object value, boolean defaultValue) {
         if (value == null) {
             return defaultValue;
@@ -313,6 +341,28 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
             return WorkerBackpressurePolicy.FAIL_FAST;
         }
         throw new IllegalArgumentException("unknown partitioned backpressure " + value);
+    }
+
+    private static TracingSamplerKind sampler(String value) {
+        if (value == null || value.equals("off")) {
+            return TracingSamplerKind.OFF;
+        }
+        return switch (value) {
+            case "alwaysOn" -> TracingSamplerKind.ALWAYS_ON;
+            case "traceIdRatio" -> TracingSamplerKind.TRACE_ID_RATIO;
+            default -> throw new IllegalArgumentException("unknown tracing sampler " + value);
+        };
+    }
+
+    private static TracingPropagationMode propagation(String value) {
+        if (value == null || value.equals("none")) {
+            return TracingPropagationMode.NONE;
+        }
+        return switch (value) {
+            case "application" -> TracingPropagationMode.APPLICATION;
+            case "payloadPrefix" -> TracingPropagationMode.PAYLOAD_PREFIX;
+            default -> throw new IllegalArgumentException("unknown tracing propagation " + value);
+        };
     }
 
     private static RoutingMode routing(String value) {

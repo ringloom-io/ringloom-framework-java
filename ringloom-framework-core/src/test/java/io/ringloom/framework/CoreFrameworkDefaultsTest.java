@@ -147,6 +147,7 @@ final class CoreFrameworkDefaultsTest {
         assertThat(adapter.shouldTraceReceive(messageContext)).isFalse();
         assertThat(adapter.onSendStart(clientContext)).isSameAs(adapter.onSendStart(clientContext));
         assertThat(adapter.onReceiveStart(messageContext)).isSameAs(adapter.onReceiveStart(messageContext));
+        assertThatCode(() -> adapter.onSendStart(clientContext).complete(0)).doesNotThrowAnyException();
         assertThatCode(() -> adapter.onSendStart(clientContext).close()).doesNotThrowAnyException();
         assertThatCode(() -> adapter.onSendComplete(clientContext, 0)).doesNotThrowAnyException();
         assertThatCode(() -> adapter.onHandlerComplete(messageContext, 0)).doesNotThrowAnyException();

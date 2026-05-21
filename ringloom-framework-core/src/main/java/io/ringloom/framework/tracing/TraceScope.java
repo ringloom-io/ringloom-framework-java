@@ -6,6 +6,13 @@ package io.ringloom.framework.tracing;
  */
 public interface TraceScope extends AutoCloseable {
     /**
+     * Records the RingLoom completion status before the scope is closed.
+     *
+     * @param status the RingLoom status code
+     */
+    default void complete(int status) {}
+
+    /**
      * Ends the tracing scope.
      */
     @Override

@@ -5,6 +5,7 @@ avajeInject = "12.5"
 fory = "0.17.0"
 jmustache = "1.16"
 jmh = "1.37"
+opentelemetry = "1.56.0"
 snakeYamlEngine = "2.9"
 assertj = "3.27.7"
 junit = "6.0.3"
@@ -27,6 +28,10 @@ junitBom = { group = "org.junit", name = "junit-bom", version.ref = "junit" }
 junitJupiter = { group = "org.junit.jupiter", name = "junit-jupiter" }
 junitPlatformLauncher = { group = "org.junit.platform", name = "junit-platform-launcher" }
 mockitoCore = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
+opentelemetryApi = { group = "io.opentelemetry", name = "opentelemetry-api" }
+opentelemetryBom = { group = "io.opentelemetry", name = "opentelemetry-bom", version.ref = "opentelemetry" }
+opentelemetrySdk = { group = "io.opentelemetry", name = "opentelemetry-sdk" }
+opentelemetrySdkTesting = { group = "io.opentelemetry", name = "opentelemetry-sdk-testing" }
 ringloomJavaBindings = { group = "io.ringloom", name = "ringloom-java-bindings", version.ref = "ringloomJavaBindings" }
 slf4jApi = { group = "org.slf4j", name = "slf4j-api", version.ref = "slf4j" }
 slf4jSimple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }

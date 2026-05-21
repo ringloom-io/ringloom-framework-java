@@ -47,6 +47,7 @@
     }
     } finally {
       if (traceContext != null) {
+        traceScope.complete(status);
         traceAdapter.onSendComplete(traceContext, status);
         traceScope.close();
       }

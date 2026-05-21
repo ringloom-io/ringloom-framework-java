@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.ringloom.framework.config.MessageExecutionMode;
 import io.ringloom.framework.config.RuntimeMode;
+import io.ringloom.framework.config.TracingPropagationMode;
+import io.ringloom.framework.config.TracingSamplerKind;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -40,6 +42,12 @@ final class YamlRingloomConfigLoaderTest {
                   ticksPerWheel: 64
                   initialTickAllocation: 4
                   pollLimit: 8
+                tracing:
+                  enabled: true
+                  sampler: traceIdRatio
+                  sampleRatio: 0.25
+                  propagation: payloadPrefix
+                  includeDecodeTime: false
               serializers:
                 default: sbe
                 entries:
@@ -65,6 +73,11 @@ final class YamlRingloomConfigLoaderTest {
         assertThat(config.runtime().scheduler().ticksPerWheel()).isEqualTo(64);
         assertThat(config.runtime().scheduler().initialTickAllocation()).isEqualTo(4);
         assertThat(config.runtime().scheduler().pollLimit()).isEqualTo(8);
+        assertThat(config.runtime().tracing().enabled()).isTrue();
+        assertThat(config.runtime().tracing().sampler()).isEqualTo(TracingSamplerKind.TRACE_ID_RATIO);
+        assertThat(config.runtime().tracing().sampleRatio()).isEqualTo(0.25);
+        assertThat(config.runtime().tracing().propagation()).isEqualTo(TracingPropagationMode.PAYLOAD_PREFIX);
+        assertThat(config.runtime().tracing().includeDecodeTime()).isFalse();
         assertThat(config.runtime().execution().mode()).isEqualTo(MessageExecutionMode.VIRTUAL_THREADS);
         assertThat(config.runtime().execution().virtualThreads().maxInFlight()).isEqualTo(17);
         assertThat(config.clients().get("pricing").service()).isEqualTo("pricing");
@@ -85,5 +98,66 @@ final class YamlRingloomConfigLoaderTest {
         assertThatThrownBy(() -> new YamlRingloomConfigLoader().load(file))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("unknown key ringloom.service.surprise");
+    }
+
+    @Test
+    void rejectsUnknownTracingKeys() throws Exception {
+        // Given
+        Path file = tempDir.resolve("bad-tracing-key.yaml");
+        Files.writeString(file, """
+            ringloom:
+              service:
+                name: orders
+              runtime:
+                tracing:
+                  enabled: true
+                  surprise: true
+            """);
+
+        // When / Then
+        assertThatThrownBy(() -> new YamlRingloomConfigLoader().load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("unknown key ringloom.runtime.tracing.surprise");
+    }
+
+    @Test
+    void rejectsInvalidTracingValues() throws Exception {
+        // Given
+        Path file = tempDir.resolve("bad-tracing-value.yaml");
+        Files.writeString(file, """
+            ringloom:
+              service:
+                name: orders
+              runtime:
+                tracing:
+                  enabled: true
+                  sampler: unknown
+            """);
+
+        // When / Then
+        assertThatThrownBy(() -> new YamlRingloomConfigLoader().load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("unknown tracing sampler unknown");
+    }
+
+    @Test
+    void rejectsInvalidTracingSampleRatio() throws Exception {
+        // Given
+        Path file = tempDir.resolve("bad-tracing-ratio.yaml");
+        Files.writeString(file, """
+            ringloom:
+              service:
+                name: orders
+              runtime:
+                tracing:
+                  enabled: true
+                  sampler: traceIdRatio
+                  sampleRatio: 2.0
+            """);
+
+        // When / Then
+        assertThatThrownBy(() -> new YamlRingloomConfigLoader().load(file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("tracing.sampleRatio must be between 0.0 and 1.0");
     }
 }

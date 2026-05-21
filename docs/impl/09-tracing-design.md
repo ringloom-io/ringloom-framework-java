@@ -125,9 +125,24 @@ Generated handler:
 The no-op implementation should make these calls cheap but the runtime config
 should still support fully disabling hooks.
 
+Core now carries tracing configuration under `ringloom.runtime.tracing` without
+depending on OpenTelemetry:
+
+```yaml
+tracing:
+  enabled: false
+  sampler: off # off, alwaysOn, traceIdRatio
+  sampleRatio: 0.0
+  propagation: none # none, application, payloadPrefix
+  includeDecodeTime: true
+```
+
+This configuration is consumed by tracing adapters. Enabling it without
+installing a `TraceAdapter` leaves core on the no-op path and logs a warning.
+
 ## OpenTelemetry adapter
 
-If implemented, put it in a separate artifact:
+The optional adapter lives in a separate artifact:
 
 ```text
 ringloom-tracing-opentelemetry
@@ -137,10 +152,15 @@ Dependencies:
 
 1. `ringloom-framework-core`.
 2. OpenTelemetry API.
-3. OpenTelemetry SDK only if the adapter owns SDK configuration; otherwise depend
-   only on API and accept injected tracer.
+3. OpenTelemetry SDK only for tests; the runtime adapter accepts an injected
+   `Tracer`.
 
 The core framework must not depend on OpenTelemetry.
+
+The current adapter creates local messaging spans for sampled send and receive
+hooks. Cross-service propagation remains a future phase, so non-`none`
+propagation modes are configuration surface only until payload/header propagation
+is implemented.
 
 ## Testing
 

@@ -115,6 +115,9 @@ public final class RingloomRuntime implements AutoCloseable {
         this.traceAdapter = Objects.requireNonNull(traceAdapter, "traceAdapter");
         this.tracingEnabled = traceAdapter != NoopTraceAdapter.INSTANCE;
         this.logger = Objects.requireNonNull(logger, "logger");
+        if (config.runtime().tracing().enabled() && traceAdapter == NoopTraceAdapter.INSTANCE) {
+            this.logger.warn("RingLoom tracing is configured but no TraceAdapter is installed");
+        }
         this.requestRegistry =
                 new PooledRequestResponseRegistry(config.runtime().requests().maxPending());
         this.scheduler = new RingloomScheduler(config.runtime().scheduler(), this);

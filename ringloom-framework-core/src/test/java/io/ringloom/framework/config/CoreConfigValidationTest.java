@@ -13,7 +13,7 @@ final class CoreConfigValidationTest {
     @Test
     void normalizesRuntimeDefaults() {
         // Given / When
-        RingloomRuntimeConfig config = new RingloomRuntimeConfig(null, null, null, null, null, null, false);
+        RingloomRuntimeConfig config = new RingloomRuntimeConfig(null, null, null, null, null, null, false, null);
 
         // Then
         assertThat(config.mode()).isEqualTo(RuntimeMode.DEDICATED);
@@ -22,6 +22,8 @@ final class CoreConfigValidationTest {
         assertThat(config.execution().mode()).isEqualTo(MessageExecutionMode.CONSUMER_THREAD);
         assertThat(config.scheduler()).isEqualTo(SchedulerRuntimeConfig.defaults());
         assertThat(config.requests()).isEqualTo(RequestRuntimeConfig.defaults());
+        assertThat(config.tracing()).isEqualTo(TracingRuntimeConfig.defaults());
+        assertThat(config.tracing().includeDecodeTime()).isTrue();
     }
 
     @Test
@@ -81,6 +83,23 @@ final class CoreConfigValidationTest {
     }
 
     @Test
+    void validatesTracingRuntimeSettings() {
+        // Given / When / Then
+        assertThat(new TracingRuntimeConfig(true, TracingSamplerKind.TRACE_ID_RATIO, 0.25, null, false).propagation())
+                .isEqualTo(TracingPropagationMode.NONE);
+        assertThatThrownBy(() -> new TracingRuntimeConfig(true, TracingSamplerKind.TRACE_ID_RATIO, -0.1, null, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("tracing.sampleRatio must be between 0.0 and 1.0");
+        assertThatThrownBy(() -> new TracingRuntimeConfig(true, TracingSamplerKind.TRACE_ID_RATIO, 1.1, null, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("tracing.sampleRatio must be between 0.0 and 1.0");
+        assertThatThrownBy(
+                        () -> new TracingRuntimeConfig(true, TracingSamplerKind.TRACE_ID_RATIO, Double.NaN, null, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("tracing.sampleRatio must be between 0.0 and 1.0");
+    }
+
+    @Test
     void validatesEventLoopAndVirtualThreadSettings() {
         // Given / When / Then
         assertThatThrownBy(() -> new RingloomEventLoopConfig(null, -1))
@@ -106,21 +125,22 @@ final class CoreConfigValidationTest {
 
         // When / Then
         assertThat(new RingloomRuntimeConfig(
-                                RuntimeMode.DEDICATED, controlPinned, messagesPinned, null, null, null, false)
+                                RuntimeMode.DEDICATED, controlPinned, messagesPinned, null, null, null, false, null)
                         .control()
                         .cpuCore())
                 .isEqualTo(2);
         assertThatThrownBy(() -> new RingloomRuntimeConfig(
-                        RuntimeMode.SHARED, controlPinned, messagesPinned, null, null, null, false))
+                        RuntimeMode.SHARED, controlPinned, messagesPinned, null, null, null, false, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(
                         "shared runtime mode uses one event-loop thread, so control.cpuCore and messages.cpuCore must match");
-        assertThat(new RingloomRuntimeConfig(RuntimeMode.SHARED, controlPinned, samePinned, null, null, null, false)
+        assertThat(new RingloomRuntimeConfig(
+                                RuntimeMode.SHARED, controlPinned, samePinned, null, null, null, false, null)
                         .messages()
                         .cpuCore())
                 .isEqualTo(2);
-        assertThatThrownBy(() ->
-                        new RingloomRuntimeConfig(RuntimeMode.EXTERNAL, controlPinned, null, null, null, null, false))
+        assertThatThrownBy(() -> new RingloomRuntimeConfig(
+                        RuntimeMode.EXTERNAL, controlPinned, null, null, null, null, false, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("event-loop cpuCore cannot be configured in external runtime mode");
     }

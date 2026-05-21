@@ -62,6 +62,12 @@ ringloom:
       maxPending: 65536
       defaultTimeoutMillis: 5000
       pooledPendingRequests: true
+    tracing:
+      enabled: false
+      sampler: off
+      sampleRatio: 0.0
+      propagation: none
+      includeDecodeTime: true
     lifecycle:
       shutdownHook: true
 

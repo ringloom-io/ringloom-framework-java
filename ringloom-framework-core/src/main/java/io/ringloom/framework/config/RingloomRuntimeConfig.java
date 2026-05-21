@@ -13,6 +13,7 @@ import java.util.Objects;
  * @param scheduler the control-loop scheduler settings
  * @param requests the request/response tracking settings
  * @param shutdownHook whether the runtime should install a JVM shutdown hook
+ * @param tracing the generated-code tracing settings
  */
 public record RingloomRuntimeConfig(
         RuntimeMode mode,
@@ -21,7 +22,8 @@ public record RingloomRuntimeConfig(
         MessageExecutionConfig execution,
         SchedulerRuntimeConfig scheduler,
         RequestRuntimeConfig requests,
-        boolean shutdownHook) {
+        boolean shutdownHook,
+        TracingRuntimeConfig tracing) {
     public RingloomRuntimeConfig {
         mode = Objects.requireNonNullElse(mode, RuntimeMode.DEDICATED);
         control = control == null ? RingloomEventLoopConfig.defaults() : control;
@@ -30,6 +32,7 @@ public record RingloomRuntimeConfig(
         execution = execution == null ? MessageExecutionConfig.consumerThread() : execution;
         scheduler = scheduler == null ? SchedulerRuntimeConfig.defaults() : scheduler;
         requests = requests == null ? RequestRuntimeConfig.defaults() : requests;
+        tracing = tracing == null ? TracingRuntimeConfig.defaults() : tracing;
     }
 
     /**
@@ -38,7 +41,7 @@ public record RingloomRuntimeConfig(
      * @return the framework defaults for runtime execution
      */
     public static RingloomRuntimeConfig defaults() {
-        return new RingloomRuntimeConfig(RuntimeMode.DEDICATED, null, null, null, null, null, true);
+        return new RingloomRuntimeConfig(RuntimeMode.DEDICATED, null, null, null, null, null, true, null);
     }
 
     private static void validateEventLoopAffinity(

@@ -54,6 +54,7 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
       status = dispatchMessage(context);
       return status;
     } finally {
+      traceScope.complete(status);
       traceAdapter.onHandlerComplete(context, status);
       traceScope.close();
     }

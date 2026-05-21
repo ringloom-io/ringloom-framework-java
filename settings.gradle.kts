@@ -21,6 +21,7 @@ include(
     "ringloom-serializer-sbe",
     "ringloom-serializer-fory",
     "ringloom-ioc-avaje",
+    "ringloom-tracing-opentelemetry",
     "samples:order-management",
     "samples:order-management-avaje",
     "samples:market-data-avaje-sbe",
