@@ -5,13 +5,21 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.Context;
 import io.opentelemetry.context.Scope;
+import io.opentelemetry.context.propagation.TextMapGetter;
+import io.opentelemetry.context.propagation.TextMapSetter;
 import io.ringloom.framework.annotation.RoutingMode;
+import io.ringloom.framework.config.TracingPropagationMode;
 import io.ringloom.framework.config.TracingRuntimeConfig;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.tracing.ClientTraceContext;
 import io.ringloom.framework.tracing.TraceAdapter;
+import io.ringloom.framework.tracing.TracePayloadPrefix;
 import io.ringloom.framework.tracing.TraceScope;
+import java.lang.foreign.MemorySegment;
+import java.util.HashMap;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -22,6 +30,20 @@ import java.util.concurrent.ThreadLocalRandom;
  * later phase.
  */
 public final class OpenTelemetryTraceAdapter implements TraceAdapter {
+    private static final W3CTraceContextPropagator W3C_PROPAGATOR = W3CTraceContextPropagator.getInstance();
+    private static final TextMapSetter<HashMap<String, String>> MAP_SETTER = HashMap::put;
+    private static final TextMapGetter<HashMap<String, String>> MAP_GETTER = new TextMapGetter<>() {
+        @Override
+        public Iterable<String> keys(HashMap<String, String> carrier) {
+            return carrier.keySet();
+        }
+
+        @Override
+        public String get(HashMap<String, String> carrier, String key) {
+            return carrier.get(key);
+        }
+    };
+
     private static final String MESSAGING_SYSTEM = "messaging.system";
     private static final String MESSAGING_DESTINATION_NAME = "messaging.destination.name";
     private static final String MESSAGING_OPERATION = "messaging.operation";
@@ -64,6 +86,13 @@ public final class OpenTelemetryTraceAdapter implements TraceAdapter {
 
     @Override
     public boolean shouldTraceReceive(MessageContext context) {
+        if (context.tracingContext() instanceof Context parent) {
+            io.opentelemetry.api.trace.SpanContext spanContext =
+                    Span.fromContext(parent).getSpanContext();
+            if (spanContext.isValid()) {
+                return config.enabled() && spanContext.isSampled();
+            }
+        }
         return shouldSample();
     }
 
@@ -85,13 +114,16 @@ public final class OpenTelemetryTraceAdapter implements TraceAdapter {
 
     @Override
     public TraceScope onReceiveStart(MessageContext context) {
-        Span span = tracer.spanBuilder("ringloom.receive " + context.templateId())
+        io.opentelemetry.api.trace.SpanBuilder builder = tracer.spanBuilder("ringloom.receive " + context.templateId())
                 .setSpanKind(SpanKind.CONSUMER)
                 .setAttribute(MESSAGING_SYSTEM, SYSTEM_NAME)
                 .setAttribute(MESSAGING_OPERATION, "process")
                 .setAttribute(RINGLOOM_TEMPLATE_ID, context.templateId())
-                .setAttribute(RINGLOOM_PAYLOAD_BYTES, context.payloadSegment().byteSize())
-                .startSpan();
+                .setAttribute(RINGLOOM_PAYLOAD_BYTES, context.payloadSegment().byteSize());
+        if (context.tracingContext() instanceof Context parent) {
+            builder.setParent(parent);
+        }
+        Span span = builder.startSpan();
         return new SpanTraceScope(span, span.makeCurrent());
     }
 
@@ -100,6 +132,41 @@ public final class OpenTelemetryTraceAdapter implements TraceAdapter {
 
     @Override
     public void onHandlerComplete(MessageContext context, int status) {}
+
+    @Override
+    public int payloadPrefixLength(ClientTraceContext context) {
+        return config.propagation() == TracingPropagationMode.PAYLOAD_PREFIX ? TracePayloadPrefix.BYTE_LENGTH : 0;
+    }
+
+    @Override
+    public void writePayloadPrefix(ClientTraceContext context, TraceScope scope, MemorySegment prefix) {
+        if (config.propagation() != TracingPropagationMode.PAYLOAD_PREFIX) {
+            return;
+        }
+        HashMap<String, String> carrier = new HashMap<>();
+        W3C_PROPAGATOR.inject(Context.current(), carrier, MAP_SETTER);
+        String traceparent = carrier.get("traceparent");
+        if (traceparent == null) {
+            throw new IllegalStateException("OpenTelemetry did not inject a traceparent");
+        }
+        TracePayloadPrefix.write(prefix, traceparent);
+    }
+
+    @Override
+    public boolean extractPayloadPrefix(MessageContext context) {
+        if (config.propagation() != TracingPropagationMode.PAYLOAD_PREFIX) {
+            return false;
+        }
+        return TracePayloadPrefix.traceparent(context.payloadSegment())
+                .map(traceparent -> {
+                    HashMap<String, String> carrier = new HashMap<>();
+                    carrier.put("traceparent", traceparent);
+                    context.tracingContext(W3C_PROPAGATOR.extract(Context.current(), carrier, MAP_GETTER));
+                    context.payloadSegment(TracePayloadPrefix.strip(context.payloadSegment()));
+                    return true;
+                })
+                .orElse(false);
+    }
 
     private boolean shouldSample() {
         if (!config.enabled()) {

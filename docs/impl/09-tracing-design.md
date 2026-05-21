@@ -157,10 +157,12 @@ Dependencies:
 
 The core framework must not depend on OpenTelemetry.
 
-The current adapter creates local messaging spans for sampled send and receive
-hooks. Cross-service propagation remains a future phase, so non-`none`
-propagation modes are configuration surface only until payload/header propagation
-is implemented.
+The adapter creates sampled messaging spans for send and receive hooks. With
+`propagation: payloadPrefix`, serializer-managed generated sends reserve a small
+payload prefix carrying W3C `traceparent`; generated dispatch extracts it,
+strips the prefix before decode, and starts the receive span as a child. Raw
+`MemorySegment` sends are not mutated, so applications that use raw payloads
+should use `propagation: application` and carry trace context themselves.
 
 ## Testing
 

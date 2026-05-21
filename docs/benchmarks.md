@@ -55,6 +55,13 @@ Examples:
   -PjmhArgs='VirtualThreadExecutionPolicyBenchmark -p maxInFlight=1000,10000 -p payloadBytes=128,256'
 ```
 
+Trace-hook overhead can be measured separately:
+
+```bash
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='GeneratedTracingHookBenchmark'
+```
+
 Each benchmark invocation dispatches a fixed batch of 16,384 messages and waits
 for the asynchronous policy to process the full batch. JMH reports throughput as
 messages per second via `@OperationsPerInvocation`.

@@ -71,7 +71,8 @@ final class RingloomFrameworkProcessorTest {
                 .contains("traceScope.complete(status)")
                 .contains("traceAdapter.onSendComplete(traceContext, status)");
         assertThat(Files.readString(generated.resolve("test/OrdersApp_RingloomDispatcher.java")))
-                .contains("tracedDispatchMessage(context)")
+                .contains("extractPayloadPrefix(context)")
+                .contains("tracedDispatchOrResolve(context)")
                 .contains("traceScope.complete(status)")
                 .contains("traceAdapter.onHandlerComplete(context, status)");
         assertThat(classes.resolve(
@@ -366,6 +367,8 @@ final class RingloomFrameworkProcessorTest {
         assertThat(Files.readString(generated.resolve("test/PricingClient_RingloomClient.java")))
                 .contains("tryClaimRequest(31, pending.correlationId()")
                 .contains("pending.prepare(")
+                .contains("payloadPrefixLength(traceContext)")
+                .contains("writePayloadPrefix(")
                 .contains("serializers.decoder(responseSerializerName, test.PriceQuote.class)")
                 .contains("awaiter.awaitNanos(timeoutNanos)");
         assertThat(Files.readString(generated.resolve("test/TerminalClient_RingloomClient.java")))

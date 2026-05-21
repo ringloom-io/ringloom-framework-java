@@ -10,9 +10,9 @@
     }
     EncodeContext requestEncodeContext = encodeContexts.get();
     BufferClaim replyClaim = claims.get();
-    final int payloadLength;
+    final int encodedPayloadLength;
     try {
-      payloadLength = encoder.encodedLength({{payloadName}}, requestEncodeContext);
+      encodedPayloadLength = encoder.encodedLength({{payloadName}}, requestEncodeContext);
     } catch (RuntimeException ex) {
       return RingloomHandlerStatus.SERIALIZATION_ERROR;
     }
@@ -21,10 +21,12 @@
     int status = RingloomHandlerStatus.SERIALIZATION_ERROR;
     if (tracingEnabled
         && traceAdapter.shouldTraceSend(
-            CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
-      traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+            CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, encodedPayloadLength)) {
+      traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, encodedPayloadLength);
       traceScope = traceAdapter.onSendStart(traceContext);
     }
+    int payloadPrefixLength = traceContext == null ? 0 : traceAdapter.payloadPrefixLength(traceContext);
+    int payloadLength = Math.addExact(encodedPayloadLength, payloadPrefixLength);
     try {
       status = lowLevelClient.tryClaimToRequest(
         replyTo.sourceNodeId(),
@@ -37,7 +39,12 @@
       return status;
     }
     try {
-      encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(replyClaim.payloadSegment()), requestEncodeContext);
+      if (payloadPrefixLength > 0) {
+        traceAdapter.writePayloadPrefix(
+            traceContext, traceScope, replyClaim.payloadSegment().asSlice(0, payloadPrefixLength));
+      }
+      encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(
+          replyClaim.payloadSegment().asSlice(payloadPrefixLength, encodedPayloadLength)), requestEncodeContext);
         status = replyClaim.commit();
         return status;
     } catch (RuntimeException ex) {

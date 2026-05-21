@@ -19,7 +19,9 @@ import io.ringloom.framework.config.TracingRuntimeConfig;
 import io.ringloom.framework.config.TracingSamplerKind;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.tracing.ClientTraceContext;
+import io.ringloom.framework.tracing.TracePayloadPrefix;
 import io.ringloom.framework.tracing.TraceScope;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -127,6 +129,48 @@ final class OpenTelemetryTraceAdapterTest {
                 .isEqualTo(16L);
         assertThat(span.getAttributes().get(AttributeKey.longKey("ringloom.status")))
                 .isEqualTo(7L);
+    }
+
+    @Test
+    void propagatesPayloadPrefixParentToReceiveSpan() {
+        // Given
+        OpenTelemetryTraceAdapter adapter = adapter(new TracingRuntimeConfig(
+                true, TracingSamplerKind.ALWAYS_ON, 1.0, TracingPropagationMode.PAYLOAD_PREFIX, true));
+        ClientTraceContext sendContext =
+                new ClientTraceContext("PricingClient", "pricing", 101, RoutingMode.LEADER, 16);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment payload = arena.allocate(TracePayloadPrefix.BYTE_LENGTH + 16);
+
+            // When
+            TraceScope sendScope = adapter.onSendStart(sendContext);
+            adapter.writePayloadPrefix(sendContext, sendScope, payload.asSlice(0, TracePayloadPrefix.BYTE_LENGTH));
+            sendScope.complete(0);
+            sendScope.close();
+            MessageContext receiveContext = new MessageContext();
+            receiveContext.updateCopied(42, (short) 1, (short) 2, (short) 3, (short) 4, 101, 0, payload);
+            boolean extracted = adapter.extractPayloadPrefix(receiveContext);
+            assertThat(extracted).isTrue();
+            assertThat(receiveContext.payloadSegment().byteSize()).isEqualTo(16);
+            assertThat(adapter.shouldTraceReceive(receiveContext)).isTrue();
+            TraceScope receiveScope = adapter.onReceiveStart(receiveContext);
+            receiveScope.complete(0);
+            receiveScope.close();
+        }
+
+        // Then
+        List<SpanData> spans = exporter.getFinishedSpanItems();
+        SpanData send = spans.stream()
+                .filter(span -> span.getName().startsWith("ringloom.send"))
+                .findFirst()
+                .orElseThrow();
+        SpanData receive = spans.stream()
+                .filter(span -> span.getName().startsWith("ringloom.receive"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(receive.getParentSpanContext().getTraceId())
+                .isEqualTo(send.getSpanContext().getTraceId());
+        assertThat(receive.getParentSpanContext().getSpanId())
+                .isEqualTo(send.getSpanContext().getSpanId());
     }
 
     @Test

@@ -18,6 +18,7 @@ public final class MessageContext {
     private int templateId;
     private int flags;
     private MemorySegment payloadSegment = MemorySegment.NULL;
+    private Object tracingContext;
 
     public MessageContext() {}
 
@@ -29,6 +30,14 @@ public final class MessageContext {
         this.runtime = runtime;
     }
 
+    public void tracingContext(Object tracingContext) {
+        this.tracingContext = tracingContext;
+    }
+
+    public void payloadSegment(MemorySegment payloadSegment) {
+        this.payloadSegment = payloadSegment;
+    }
+
     public void updateFrom(RingloomMessage message) {
         correlationId = message.correlationId();
         sourceNodeId = message.sourceNodeId();
@@ -38,6 +47,7 @@ public final class MessageContext {
         templateId = message.templateId();
         flags = message.flags();
         payloadSegment = message.payloadSegment();
+        tracingContext = null;
     }
 
     public void updateCopied(
@@ -57,10 +67,15 @@ public final class MessageContext {
         this.templateId = templateId;
         this.flags = flags;
         this.payloadSegment = payloadSegment;
+        tracingContext = null;
     }
 
     public RingloomRuntime runtime() {
         return runtime;
+    }
+
+    public Object tracingContext() {
+        return tracingContext;
     }
 
     public long correlationId() {

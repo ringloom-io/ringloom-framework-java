@@ -3,6 +3,7 @@ package io.ringloom.framework.tracing;
 
 import io.ringloom.framework.annotation.RoutingMode;
 import io.ringloom.framework.dispatch.MessageContext;
+import java.lang.foreign.MemorySegment;
 
 /**
  * Adapter interface for integrating application tracing with RingLoom sends and handler
@@ -32,6 +33,35 @@ public interface TraceAdapter {
      */
     default boolean shouldTraceReceive(MessageContext context) {
         return true;
+    }
+
+    /**
+     * Returns the number of bytes to reserve for trace context before an encoded payload.
+     *
+     * @param context the outbound client trace context
+     * @return the prefix length in bytes
+     */
+    default int payloadPrefixLength(ClientTraceContext context) {
+        return 0;
+    }
+
+    /**
+     * Writes trace context into a reserved payload prefix.
+     *
+     * @param context the outbound client trace context
+     * @param scope the active send scope
+     * @param prefix the target prefix segment
+     */
+    default void writePayloadPrefix(ClientTraceContext context, TraceScope scope, MemorySegment prefix) {}
+
+    /**
+     * Extracts trace context from an inbound payload and updates the message context.
+     *
+     * @param context the inbound message context
+     * @return {@code true} when trace context was extracted
+     */
+    default boolean extractPayloadPrefix(MessageContext context) {
+        return false;
     }
 
     /**

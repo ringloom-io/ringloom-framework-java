@@ -41,9 +41,9 @@
         runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.SERIALIZATION_ERROR);
         throw new RingloomRequestException("missing request encoder", RingloomHandlerStatus.SERIALIZATION_ERROR);
       }
-      final int payloadLength;
+      final int encodedPayloadLength;
       try {
-        payloadLength = encoder.encodedLength({{payloadName}}, requestEncodeContext);
+        encodedPayloadLength = encoder.encodedLength({{payloadName}}, requestEncodeContext);
       } catch (RuntimeException ex) {
         runtime.requestResponseRegistry().cancel(pending, RingloomHandlerStatus.SERIALIZATION_ERROR);
         throw new RingloomRequestException("request encoding failed", RingloomHandlerStatus.SERIALIZATION_ERROR);
@@ -53,10 +53,12 @@
       int status = RingloomHandlerStatus.SERIALIZATION_ERROR;
       if (tracingEnabled
           && traceAdapter.shouldTraceSend(
-              CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, payloadLength)) {
-        traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, payloadLength);
+              CLIENT_NAME, TARGET_SERVICE_NAME, {{templateId}}, RoutingMode.{{routingMode}}, encodedPayloadLength)) {
+        traceContext = traceContext({{templateId}}, RoutingMode.{{routingMode}}, encodedPayloadLength);
         traceScope = traceAdapter.onSendStart(traceContext);
       }
+      int payloadPrefixLength = traceContext == null ? 0 : traceAdapter.payloadPrefixLength(traceContext);
+      int payloadLength = Math.addExact(encodedPayloadLength, payloadPrefixLength);
       try {
         try (BufferClaim requestClaim = lowLevelClient.newClaim()) {
           status = lowLevelClient.tryClaimRequest({{templateId}}, pending.correlationId(), payloadLength, requestClaim);
@@ -65,7 +67,12 @@
             throw new RingloomRequestException("request send failed", status);
           }
           try {
-            encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(requestClaim.payloadSegment()), requestEncodeContext);
+            if (payloadPrefixLength > 0) {
+              traceAdapter.writePayloadPrefix(
+                  traceContext, traceScope, requestClaim.payloadSegment().asSlice(0, payloadPrefixLength));
+            }
+            encoder.encode({{payloadName}}, requestEncodeContext.buffer().wrap(
+                requestClaim.payloadSegment().asSlice(payloadPrefixLength, encodedPayloadLength)), requestEncodeContext);
           } catch (RuntimeException ex) {
             requestClaim.abort();
             status = RingloomHandlerStatus.SERIALIZATION_ERROR;

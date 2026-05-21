@@ -34,23 +34,29 @@ public final class {{dispatcherName}} implements GeneratedMessageDispatcher {
 
   @Override
   public int onMessage(RingloomMessage message, MessageContext context) {
+    if (context.runtime() != null && context.runtime().tracingEnabled()) {
+      io.ringloom.framework.tracing.TraceAdapter traceAdapter = context.runtime().traceAdapter();
+      traceAdapter.extractPayloadPrefix(context);
+      if (traceAdapter.shouldTraceReceive(context)) {
+        return tracedDispatchOrResolve(context);
+      }
+    }
     int responseStatus = resolvePendingResponse(context);
     if (responseStatus != RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID) {
       return responseStatus;
     }
-    if (context.runtime() != null
-        && context.runtime().tracingEnabled()
-        && context.runtime().traceAdapter().shouldTraceReceive(context)) {
-      return tracedDispatchMessage(context);
-    }
     return dispatchMessage(context);
   }
 
-  private int tracedDispatchMessage(MessageContext context) {
+  private int tracedDispatchOrResolve(MessageContext context) {
     io.ringloom.framework.tracing.TraceAdapter traceAdapter = context.runtime().traceAdapter();
     io.ringloom.framework.tracing.TraceScope traceScope = traceAdapter.onReceiveStart(context);
     int status = RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID;
     try {
+      status = resolvePendingResponse(context);
+      if (status != RingloomHandlerStatus.UNKNOWN_TEMPLATE_ID) {
+        return status;
+      }
       status = dispatchMessage(context);
       return status;
     } finally {
