@@ -1,70 +1,60 @@
 ## Benchmark results
 
-These measurements were captured from the gated benchmark tests in
-`ringloom-framework-core` on **2026-05-20** using the default harness settings.
-They are in-process microbenchmarks, so they do **not** require a running
-RingLoom broker.
-
-| Policy | Benchmark test | Messages | Payload | Concurrency setting | Elapsed | Throughput |
-| --- | --- | ---: | ---: | --- | ---: | ---: |
-| Partitioned workers (Agrona SPSC ring buffer) | `PartitionedWorkerExecutionPolicyBenchmarkTest` | 500,000 | 128 B | `workers=4`, `queueCapacity=1024` | 69.145 ms | 7,231,209 msg/s |
-| Virtual threads | `VirtualThreadExecutionPolicyBenchmarkTest` | 500,000 | 128 B | `maxInFlight=10000` | 202.916 ms | 2,464,075 msg/s |
-
-### Historical partitioned-worker baseline
-
-Before the Agrona SPSC ring-buffer change, the previous partitioned-worker
-implementation (JCTools MPSC slot pool) measured:
-
-| Policy | Elapsed | Throughput |
-| --- | ---: | ---: |
-| Partitioned workers (previous MPSC slot pool) | 76.795 ms | 6,510,808 msg/s |
-
-## Reproducing the benchmarks
+TODO
 
 Run all commands from the repository root with **Java 25**.
 
-### Partitioned workers
-
 ```bash
-RINGLOOM_BENCHMARK=true \
-./gradlew :ringloom-framework-core:test \
-  --tests 'io.ringloom.framework.dispatch.PartitionedWorkerExecutionPolicyBenchmarkTest.partitionedWorkerThroughputBenchmark' \
-  --rerun-tasks \
-  --info
+./gradlew :ringloom-framework-core:jmh
 ```
 
-### Virtual threads
+Run only one benchmark:
 
 ```bash
-RINGLOOM_BENCHMARK=true \
-./gradlew :ringloom-framework-core:test \
-  --tests 'io.ringloom.framework.dispatch.VirtualThreadExecutionPolicyBenchmarkTest.virtualThreadThroughputBenchmark' \
-  --rerun-tasks \
-  --info
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='PartitionedWorkerExecutionPolicyBenchmark'
+```
+
+Run a quick smoke benchmark:
+
+```bash
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='ExecutionPolicyBenchmark -wi 0 -i 1 -r 100ms -f 1'
+```
+
+The Gradle task passes the framework's required Java 25 runtime flags to the JMH
+forks:
+
+```text
+--enable-native-access=ALL-UNNAMED
+--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED
+-Xshare:off
 ```
 
 ## Benchmark parameters
 
-Both benchmark tests accept the following JVM system properties and use the
-values below by default:
+The JMH benchmarks use `@Param` defaults that match the previous benchmark
+settings. Override them with standard JMH `-p` arguments:
 
-| Property | Partitioned workers | Virtual threads |
+| JMH parameter | Partitioned workers | Virtual threads |
 | --- | --- | --- |
-| `ringloom.benchmark.messages` | `500000` | `500000` |
-| `ringloom.benchmark.payloadBytes` | `128` | `128` |
-| `ringloom.benchmark.workers` | `4` | n/a |
-| `ringloom.benchmark.queueCapacity` | `1024` | n/a |
-| `ringloom.benchmark.maxInFlight` | n/a | `10000` |
+| `payloadBytes` | `128` | `128` |
+| `workers` | `4` | n/a |
+| `queueCapacity` | `1024` | n/a |
+| `maxInFlight` | n/a | `10000` |
 
-Example with overrides:
+Examples:
 
 ```bash
-RINGLOOM_BENCHMARK=true \
-./gradlew :ringloom-framework-core:test \
-  --tests 'io.ringloom.framework.dispatch.VirtualThreadExecutionPolicyBenchmarkTest.virtualThreadThroughputBenchmark' \
-  --rerun-tasks \
-  --info \
-  -Dringloom.benchmark.messages=1000000 \
-  -Dringloom.benchmark.payloadBytes=256 \
-  -Dringloom.benchmark.maxInFlight=20000
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='PartitionedWorkerExecutionPolicyBenchmark -p workers=2,4,8 -p queueCapacity=1024'
 ```
+
+```bash
+./gradlew :ringloom-framework-core:jmh \
+  -PjmhArgs='VirtualThreadExecutionPolicyBenchmark -p maxInFlight=1000,10000 -p payloadBytes=128,256'
+```
+
+Each benchmark invocation dispatches a fixed batch of 16,384 messages and waits
+for the asynchronous policy to process the full batch. JMH reports throughput as
+messages per second via `@OperationsPerInvocation`.
