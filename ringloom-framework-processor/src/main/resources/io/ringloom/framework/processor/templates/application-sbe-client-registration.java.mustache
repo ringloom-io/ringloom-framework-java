@@ -1,0 +1,12 @@
+            builder.encoder(
+                "{{serializer}}",
+                {{{dtoType}}}.class,
+                io.ringloom.framework.serializer.sbe.SbeCodecFactory.encoder(
+                    {{templateId}},
+                    (value, context) -> value.computeEncodedLength(),
+                    (value, target, context) -> {
+                      {{{encoderType}}} encoder = context.codec({{{encoderType}}}.class, {{{encoderType}}}::new);
+                      encoder.wrap(target, 0);
+                      {{{dtoType}}}.encodeWith(encoder, value);
+                      return encoder.encodedLength();
+                    }));

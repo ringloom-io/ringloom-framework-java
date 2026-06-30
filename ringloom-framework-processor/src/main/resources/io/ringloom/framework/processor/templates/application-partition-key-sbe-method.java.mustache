@@ -1,0 +1,25 @@
+
+  private long {{methodName}}(io.ringloom.service.RingloomMessage message, io.ringloom.framework.dispatch.MessageContext context) {
+    DecodeContext decodeContext = partitionDecodeContexts.get();
+    String serializerName = context.runtime() == null
+        ? "{{serializer}}"
+        : context.runtime().resolveSerializerName("{{serializer}}");
+    FlyweightDecoder<{{{type}}}> flyweight =
+        serializers.flyweight(serializerName, {{{type}}}.class);
+    final {{{type}}} decoded;
+    try {
+      if (flyweight != null) {
+        decoded = flyweight.wrap(context.payloadSegment(), decodeContext);
+      } else {
+        MessageDecoder<{{{type}}}> decoder =
+            serializers.decoder(serializerName, {{{type}}}.class);
+        if (decoder == null) {
+          throw new IllegalStateException("missing partition-key decoder for " + serializerName);
+        }
+        decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);
+      }
+    } catch (RuntimeException ex) {
+      throw new IllegalStateException("failed to decode partition key for template {{templateId}}", ex);
+    }
+    return decoded.{{{accessor}}}();
+  }

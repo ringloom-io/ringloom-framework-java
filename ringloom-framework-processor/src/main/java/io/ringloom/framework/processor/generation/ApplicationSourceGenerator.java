@@ -1,0 +1,410 @@
+// SPDX-License-Identifier: Apache-2.0
+package io.ringloom.framework.processor.generation;
+
+import io.ringloom.framework.annotation.RequestMode;
+import io.ringloom.framework.annotation.RingloomClient;
+import io.ringloom.framework.annotation.RingloomHandler;
+import io.ringloom.framework.annotation.RingloomRequest;
+import io.ringloom.framework.annotation.RingloomSchedule;
+import io.ringloom.framework.processor.ProcessorContext;
+import io.ringloom.framework.processor.TemplateRenderer;
+import io.ringloom.framework.processor.model.Handler;
+import io.ringloom.framework.processor.model.PartitionKey;
+import io.ringloom.framework.processor.model.SbePayloadModel;
+import io.ringloom.framework.processor.model.Schedule;
+import io.ringloom.framework.processor.model.SourceHelpers;
+import io.ringloom.framework.processor.model.Symbols;
+import io.ringloom.framework.processor.validation.ClientValidator;
+import io.ringloom.framework.processor.validation.HandlerValidator;
+import io.ringloom.framework.processor.validation.SbeValidator;
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.RecordComponentElement;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.ArrayType;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.TypeKind;
+import javax.lang.model.type.TypeMirror;
+
+public final class ApplicationSourceGenerator {
+
+    private final ProcessorContext ctx;
+    private final TemplateRenderer templates;
+
+    public ApplicationSourceGenerator(ProcessorContext ctx, TemplateRenderer templates) {
+        this.ctx = ctx;
+        this.templates = templates;
+    }
+
+    public void generate(
+            String pkg,
+            String appName,
+            String dispatcherName,
+            String service,
+            List<TypeElement> clients,
+            List<TypeElement> components,
+            List<Handler> handlers,
+            List<Schedule> schedules,
+            TypeElement origin) {
+        String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
+        try {
+            StringBuilder clientBindings = new StringBuilder();
+            for (int i = 0; i < clients.size(); i++) {
+                TypeElement client = clients.get(i);
+                String clientName = client.getQualifiedName().toString();
+                clientBindings.append(templates.render(
+                        "application-client-binding.java.mustache",
+                        Map.of(
+                                "clientName",
+                                clientName,
+                                "generatedClientName",
+                                clientName + "_RingloomClient",
+                                "targetServiceName",
+                                SourceHelpers.escape(client.getAnnotation(RingloomClient.class)
+                                        .service()),
+                                "comma",
+                                i + 1 == clients.size() ? "" : ",")));
+            }
+            new SourceWriter(ctx)
+                    .writeSourceFile(
+                            qualifiedName,
+                            origin,
+                            templates.render(
+                                    "application.java.mustache",
+                                    Map.of(
+                                            "packageName",
+                                            pkg,
+                                            "appName",
+                                            appName,
+                                            "dispatcherName",
+                                            dispatcherName,
+                                            "serviceName",
+                                            SourceHelpers.escape(service),
+                                            "clientBindingSources",
+                                            clientBindings.toString(),
+                                            "componentTypeSources",
+                                            componentTypeSources(components),
+                                            "serializerRegistrationSources",
+                                            serializerRegistrationSources(clients, handlers),
+                                            "partitionKeyExtractorSources",
+                                            partitionKeyExtractorSources(handlers),
+                                            "scheduleRegistrationSources",
+                                            scheduleRegistrationSources(schedules))));
+        } catch (IOException ex) {
+            ctx.error(origin, "failed to generate application: " + ex.getMessage());
+        }
+    }
+
+    public String serializerRegistrationSources(List<TypeElement> clients, List<Handler> handlers) {
+        Map<String, String> registrations = new LinkedHashMap<>();
+        Set<String> explicitForyTypes = new TreeSet<>();
+        Set<String> defaultForyTypes = new TreeSet<>();
+        for (TypeElement client : clients) {
+            for (Element enclosed : client.getEnclosedElements()) {
+                if (!(enclosed instanceof ExecutableElement method)) {
+                    continue;
+                }
+                RingloomRequest request = method.getAnnotation(RingloomRequest.class);
+                if (request == null) {
+                    continue;
+                }
+                if (ClientValidator.isMemorySegmentOnly(method)) {
+                    continue;
+                }
+                VariableElement payloadParameter = ClientValidator.clientPayloadParameter(method);
+                String payloadType = payloadParameter.asType().toString();
+                collectForyClientTypes(method, request, payloadParameter, explicitForyTypes, defaultForyTypes);
+                if (!SbePayloadModel.usesSbe(request.serializer(), payloadType)) {
+                    continue;
+                }
+                registrations.putIfAbsent(
+                        "client|sbe|" + request.templateId() + "|" + payloadType,
+                        sbeClientRegistrationSource(Symbols.SBE_SERIALIZER, request.templateId(), payloadType));
+            }
+        }
+        for (Handler handler : handlers) {
+            VariableElement payloadParameter = HandlerValidator.serializerPayloadParameter(handler.method());
+            if (payloadParameter == null) {
+                continue;
+            }
+            RingloomHandler annotation = handler.method().getAnnotation(RingloomHandler.class);
+            if (annotation == null) {
+                continue;
+            }
+            String payloadType = payloadParameter.asType().toString();
+            collectForyTypes(annotation.serializer(), payloadParameter.asType(), explicitForyTypes, defaultForyTypes);
+            if (!SbePayloadModel.usesSbe(annotation.serializer(), payloadType)) {
+                continue;
+            }
+            registrations.putIfAbsent(
+                    "handler|sbe|" + handler.templateId() + "|" + payloadType,
+                    sbeHandlerRegistrationSource(Symbols.SBE_SERIALIZER, handler.templateId(), payloadType));
+        }
+        StringBuilder out = new StringBuilder();
+        for (String source : registrations.values()) {
+            out.append(source);
+        }
+        out.append(foryRegistrationSource(explicitForyTypes, defaultForyTypes));
+        return out.toString();
+    }
+
+    private void collectForyClientTypes(
+            ExecutableElement method,
+            RingloomRequest request,
+            VariableElement payloadParameter,
+            Set<String> explicitForyTypes,
+            Set<String> defaultForyTypes) {
+        collectForyTypes(request.serializer(), payloadParameter.asType(), explicitForyTypes, defaultForyTypes);
+        if (request.mode() == RequestMode.VIRTUAL_THREAD_BLOCKING) {
+            collectForyTypes(request.serializer(), method.getReturnType(), explicitForyTypes, defaultForyTypes);
+        }
+    }
+
+    private void collectForyTypes(
+            String serializer, TypeMirror type, Set<String> explicitForyTypes, Set<String> defaultForyTypes) {
+        if (serializer.equals(Symbols.FORY_SERIALIZER)) {
+            collectForyTypeGraph(type, explicitForyTypes);
+            return;
+        }
+        if (serializer.isBlank() && !SbePayloadModel.usesSbe(serializer, type.toString())) {
+            collectForyTypeGraph(type, defaultForyTypes);
+        }
+    }
+
+    private void collectForyTypeGraph(TypeMirror type, Set<String> result) {
+        TypeKind kind = type.getKind();
+        if (kind.isPrimitive()
+                || kind == TypeKind.VOID
+                || kind == TypeKind.NULL
+                || kind == TypeKind.NONE
+                || kind == TypeKind.WILDCARD) {
+            return;
+        }
+        if (type instanceof ArrayType arrayType) {
+            collectForyTypeGraph(arrayType.getComponentType(), result);
+            return;
+        }
+        if (!(type instanceof DeclaredType declaredType)
+                || !(declaredType.asElement() instanceof TypeElement typeElement)) {
+            return;
+        }
+        String typeName = typeElement.getQualifiedName().toString();
+        for (TypeMirror argument : declaredType.getTypeArguments()) {
+            collectForyTypeGraph(argument, result);
+        }
+        if (typeName.startsWith("java.")) {
+            return;
+        }
+        result.add(typeName);
+        if (typeElement.getKind() == ElementKind.RECORD) {
+            for (RecordComponentElement component : typeElement.getRecordComponents()) {
+                collectForyTypeGraph(component.asType(), result);
+            }
+        }
+    }
+
+    public String foryRegistrationSource(Set<String> explicitForyTypes, Set<String> defaultForyTypes) {
+        Set<String> allTypes = new LinkedHashSet<>();
+        allTypes.addAll(explicitForyTypes);
+        allTypes.addAll(defaultForyTypes);
+        if (allTypes.isEmpty()) {
+            return "";
+        }
+        try {
+            return templates.render(
+                    "application-fory-registration.java.mustache",
+                    java.util.Map.of(
+                            "explicitTypes",
+                            new java.util.ArrayList<>(explicitForyTypes),
+                            "hasDefaultTypes",
+                            !defaultForyTypes.isEmpty(),
+                            "defaultTypes",
+                            new java.util.ArrayList<>(defaultForyTypes)));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render fory registration: " + ex.getMessage());
+            return "";
+        }
+    }
+
+    public String sbeClientRegistrationSource(String serializer, int templateId, String payloadType) {
+        SbePayloadModel payload = SbeValidator.requireSbeDtoPayload(payloadType, null, ctx.elementUtils(), ctx);
+        try {
+            return templates.render(
+                    "application-sbe-client-registration.java.mustache",
+                    java.util.Map.of(
+                            "serializer",
+                            SourceHelpers.escape(serializer),
+                            "dtoType",
+                            payload.dtoType(),
+                            "templateId",
+                            templateId,
+                            "encoderType",
+                            payload.encoderType()));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render sbe client registration: " + ex.getMessage());
+            return "";
+        }
+    }
+
+    public String sbeHandlerRegistrationSource(String serializer, int templateId, String payloadType) {
+        SbePayloadModel payload = SbeValidator.requireSbePayload(payloadType, null, ctx.elementUtils(), ctx);
+        try {
+            return templates.render(
+                    "application-sbe-handler-registration.java.mustache",
+                    java.util.Map.of(
+                            "serializer",
+                            SourceHelpers.escape(serializer),
+                            "decoderType",
+                            payload.decoderType(),
+                            "dtoType",
+                            payload.dtoType(),
+                            "templateId",
+                            templateId,
+                            "decoderPayload",
+                            payload.decoderPayload()));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render sbe handler registration: " + ex.getMessage());
+            return "";
+        }
+    }
+
+    public String partitionKeyExtractorSources(List<Handler> handlers) {
+        StringBuilder entries = new StringBuilder();
+        StringBuilder cases = new StringBuilder();
+        StringBuilder methodsSource = new StringBuilder();
+        int index = 0;
+        for (Handler handler : handlers) {
+            if (handler.partitionKey() == null) {
+                continue;
+            }
+            if (index > 0) {
+                entries.append(",\n");
+            }
+            String methodName = "partitionKey" + handler.templateId();
+            entries.append("        ")
+                    .append(handler.templateId())
+                    .append(", this::")
+                    .append(methodName);
+            cases.append("      case ")
+                    .append(handler.templateId())
+                    .append(" -> ")
+                    .append(methodName)
+                    .append("(message, context);\n");
+            methodsSource.append(partitionKeyMethodSource(methodName, handler));
+            index++;
+        }
+        if (index == 0) {
+            return "";
+        }
+        try {
+            return templates.render(
+                    "application-partition-key-extractors.java.mustache",
+                    java.util.Map.of(
+                            "casesSource",
+                            cases.toString(),
+                            "entriesSource",
+                            entries.toString(),
+                            "methodsSource",
+                            methodsSource.toString()));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render partition key extractors: " + ex.getMessage());
+            return "";
+        }
+    }
+
+    public String partitionKeyMethodSource(String methodName, Handler handler) {
+        PartitionKey partitionKey = handler.partitionKey();
+        VariableElement parameter = partitionKey.parameter();
+        String type = parameter.asType().toString();
+        try {
+            if (type.equals(Symbols.RINGLOOM_MESSAGE)) {
+                return templates.render(
+                        "application-partition-key-message-method.java.mustache",
+                        java.util.Map.of("methodName", methodName));
+            }
+            if (type.equals(Symbols.MESSAGE_CONTEXT)) {
+                return templates.render(
+                        "application-partition-key-context-method.java.mustache",
+                        java.util.Map.of("methodName", methodName));
+            }
+            RingloomHandler annotation = handler.method().getAnnotation(RingloomHandler.class);
+            SbeValidator.requireSbePayload(type, parameter, ctx.elementUtils(), ctx);
+            return templates.render(
+                    "application-partition-key-sbe-method.java.mustache",
+                    java.util.Map.of(
+                            "methodName",
+                            methodName,
+                            "serializer",
+                            SourceHelpers.escape(annotation.serializer()),
+                            "type",
+                            type,
+                            "templateId",
+                            handler.templateId(),
+                            "accessor",
+                            partitionKey.accessor()));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render partition key method: " + ex.getMessage());
+            return "";
+        }
+    }
+
+    public String componentTypeSources(List<TypeElement> components) {
+        Map<String, String> componentTypes = new LinkedHashMap<>();
+        for (TypeElement component : components) {
+            String type = component.getQualifiedName().toString();
+            componentTypes.putIfAbsent(type, "        " + type + ".class");
+        }
+        StringBuilder sources = new StringBuilder();
+        int index = 0;
+        for (String source : componentTypes.values()) {
+            sources.append(source);
+            if (++index < componentTypes.size()) {
+                sources.append(",");
+            }
+            sources.append("\n");
+        }
+        return sources.toString();
+    }
+
+    public String scheduleRegistrationSources(List<Schedule> schedules) {
+        if (schedules.isEmpty()) {
+            return "";
+        }
+        StringBuilder perScheduleSources = new StringBuilder();
+        for (Schedule schedule : schedules) {
+            RingloomSchedule annotation = schedule.annotation();
+            String componentType = schedule.component().getQualifiedName().toString();
+            String methodName = schedule.method().getSimpleName().toString();
+            if (annotation.fixedRateMillis() > 0) {
+                perScheduleSources.append("""
+                            runtime.scheduler().scheduleAtFixedRate(%dL, %dL, java.util.concurrent.TimeUnit.MILLISECONDS,
+                                ignored -> component(%s.class).%s());
+                    """.formatted(
+                        annotation.initialDelayMillis(), annotation.fixedRateMillis(), componentType, methodName));
+            } else {
+                perScheduleSources.append("""
+                            runtime.scheduler().scheduleWithFixedDelay(%dL, %dL, java.util.concurrent.TimeUnit.MILLISECONDS,
+                                ignored -> component(%s.class).%s());
+                    """.formatted(
+                        annotation.initialDelayMillis(), annotation.fixedDelayMillis(), componentType, methodName));
+            }
+        }
+        try {
+            return templates.render(
+                    "application-schedule-registration.java.mustache",
+                    java.util.Map.of("scheduleSources", perScheduleSources.toString()));
+        } catch (java.io.IOException ex) {
+            ctx.error(null, "failed to render schedule registration: " + ex.getMessage());
+            return "";
+        }
+    }
+}

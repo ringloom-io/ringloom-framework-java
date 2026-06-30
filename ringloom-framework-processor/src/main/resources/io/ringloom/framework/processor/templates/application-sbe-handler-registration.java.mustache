@@ -1,0 +1,31 @@
+{{#decoderPayload}}
+            builder.flyweight(
+                "{{serializer}}",
+                {{{decoderType}}}.class,
+                io.ringloom.framework.serializer.sbe.SbeCodecFactory.flyweight(
+                    {{templateId}},
+                    {{{decoderType}}}.class,
+                    {{{decoderType}}}::new,
+                    (decoder, source, context) -> decoder.wrap(
+                        source,
+                        0,
+                        {{{decoderType}}}.BLOCK_LENGTH,
+                        {{{decoderType}}}.SCHEMA_VERSION)));
+{{/decoderPayload}}
+{{^decoderPayload}}
+            builder.decoder(
+                "{{serializer}}",
+                {{{dtoType}}}.class,
+                new io.ringloom.framework.serializer.sbe.SbeDtoMessageDecoder<>(
+                    {{templateId}},
+                    {{{decoderType}}}.class,
+                    {{{decoderType}}}::new,
+                    {{{dtoType}}}.class,
+                    {{{dtoType}}}::new,
+                    (decoder, source, context) -> decoder.wrap(
+                        source,
+                        0,
+                        {{{decoderType}}}.BLOCK_LENGTH,
+                        {{{decoderType}}}.SCHEMA_VERSION),
+                    {{{dtoType}}}::decodeWith));
+{{/decoderPayload}}

@@ -1,0 +1,14 @@
+    java.util.LinkedHashSet<Class<?>> foryTypes = new java.util.LinkedHashSet<>();
+{{#explicitTypes}}    foryTypes.add({{{.}}}.class);
+{{/explicitTypes}}
+{{#hasDefaultTypes}}    if ("fory".equals(serializers.defaultSerializer())) {
+{{#defaultTypes}}      foryTypes.add({{{.}}}.class);
+{{/defaultTypes}}    }
+{{/hasDefaultTypes}}
+    if (!foryTypes.isEmpty()) {
+      new io.ringloom.framework.serializer.fory.ForySerializerModule()
+          .register(
+              builder,
+              io.ringloom.framework.serializer.fory.ForySerializerConfig.from(serializers.entry("fory")),
+              java.util.List.copyOf(foryTypes));
+    }

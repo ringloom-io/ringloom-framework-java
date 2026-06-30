@@ -1,0 +1,22 @@
+
+  @Override
+  public boolean hasPartitionKeyExtractors() {
+    return true;
+  }
+
+  @Override
+  public long partitionKey(
+      int templateId,
+      io.ringloom.service.RingloomMessage message,
+      io.ringloom.framework.dispatch.MessageContext context) {
+    return switch (templateId) {
+{{{casesSource}}}      default -> throw new IllegalStateException("missing partition-key extractor for template " + templateId);
+    };
+  }
+
+  @Override
+  public java.util.Map<Integer, io.ringloom.framework.generated.GeneratedPartitionKeyExtractor> partitionKeyExtractors() {
+    return java.util.Map.of(
+{{{entriesSource}}});
+  }
+{{{methodsSource}}}

@@ -9,12 +9,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-final class TemplateRenderer {
+public final class TemplateRenderer {
+
     private static final String TEMPLATE_ROOT = "/io/ringloom/framework/processor/templates/";
 
     private final Map<String, Template> templates = new HashMap<>();
 
-    String render(String templateName, Object model) throws IOException {
+    public String render(String templateName, Object model) throws IOException {
         return template(templateName).execute(model);
     }
 
