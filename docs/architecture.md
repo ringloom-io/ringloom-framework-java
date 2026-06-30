@@ -963,6 +963,235 @@ Recommendation:
    measuring overhead. Native tracing should prefer counters/timestamps in
    metadata first, then spans only where there is a clear latency-analysis need.
 
+## Persistent topics
+
+Persistent topics add broadcast publish/subscribe on top of the existing service
+messaging. Producers publish to a named topic; every subscriber receives every
+message in a single global order and can replay history. Messages are stored on
+disk in a per-topic [ringloom-queue](https://github.com/ringloom-io/ringloom-queue),
+survive broker restarts, and are replicated full-mesh across topics-enabled brokers.
+
+This section is the cohesive narrative for the Java framework side. The
+authoritative broker/storage/replication design lives in the native project at
+[`docs/topics-architecture.md`](https://github.com/ringloom-io/ringloom/blob/main/docs/topics-architecture.md)
+and its task specs under `docs/topics/`. The Java framework consumes topics
+**only through the ringloom java bindings**; the framework never runs a broker, opens a
+master queue for append, or drives replication (consistent with the standing
+non-goal of not running a broker from Java).
+
+### Topic roles and the Java boundary
+
+For a given topic `T`, the native layer defines four roles: the topic-leader
+broker (single writer), replica brokers (full-mesh followers), producer
+services, and subscriber services. A Java service participates in exactly two of
+these — **producer** and **subscriber**:
+
+- A **producer** registers a publication, then publishes payloads to the topic
+  leader. It receives throttled high-water-mark ack feedback on the control plane
+  for `replicate_once` sends.
+- A **subscriber** receives a local queue directory from the broker and reads its
+  local replica (or master, when co-located with the leader) **directly via a
+  ringloom-queue tailer** through the service ABI. There is **no broker round
+  trip per message** on the read path; the tailer memory-maps the local queue.
+
+Leadership election, epoch fencing, failover catch-up barriers, and replication
+are broker responsibilities exposed to Java only as control-plane notifications
+(`TopicLeaderChanged`, `TopicEndpoint`, `TopicAckFeedback`). The framework maps
+these onto publisher re-targeting and ack completion.
+
+### Confirmed topic design decisions
+
+1. **Polling is caller-driven.** The framework exposes
+   `RingloomRuntime.pollTopics()` which advances all open subscriptions by
+   polling their tailers and dispatching received messages. In `external` runtime
+   mode the application calls it explicitly. A runtime config flag
+   `runtime.topics.coalesceWithMessages` (default `true`) composes the topic
+   poll into the existing message event loop (`MessageConsumerAgent` or the
+   shared loop) so dedicated/shared deployments get automatic polling without an
+   extra thread.
+2. **A dedicated maintenance/prefetcher thread** drives the native queue
+   maintenance (`maintenancePoll`) round-robin across all open topic tailers. It
+   pre-touches read pages ahead of each tailer so the poll path faults no pages.
+   This mirrors the broker's prefetcher rationale and keeps subscriber poll
+   latency bounded. It is owned by the runtime, started once, and closed on
+   shutdown.
+3. **Topic handlers reuse the existing `MessageExecutionPolicy`.** A topic
+   message flows through the same `consumerThread` / `partitionedWorkers` /
+   `virtualThreads` policy as service messages, sharing the same per-thread
+   contexts, partition workers, and ordering guarantees. The framework adds a
+   `TopicMessageSource` adapter that the message consumer agent and
+   `pollTopics()` both feed into the policy.
+4. **Producers are annotation-driven and generated.** A `@RingloomTopicPublisher`
+   interface declares a topic; `@RingloomTopicPublish` methods become generated
+   proxies that encode a typed payload through the serializer SPI and publish
+   it. The ack mode (`fire_and_forget` / `replicate_once`) is per method.
+5. **Subscribers are annotation-only.** A `@RingloomTopicHandler` method declares
+   a subscription that the runtime registers at startup. There is no imperative
+   `runtime.subscribe(...)`; all subscriptions are compile-time known. This keeps
+   the subscriber side symmetric with the generated publisher and avoids runtime
+   subscription bookkeeping.
+6. **Acks are callback-only and high-water-mark-driven.** `replicate_once`
+   publishes register an `AckCallback` keyed by the assigned publish index. The
+   control loop advances `replicated_hwm` from `TopicAckFeedback` frames and
+   completes every pending callback whose index is `<= replicated_hwm`. There is
+   no per-message round trip and no blocking/future API; callers needing blocking
+   wrap the callback themselves on a virtual thread.
+7. **Topic code lives in the existing artifacts.** Low-level topic bindings go in
+   `ringloom-java-bindings`; topic runtime, dispatch adapter, annotations,
+   publisher/subscriber runtime, and ack registry go in `ringloom-framework-core`;
+   topic code generation goes in `ringloom-framework-processor`. There is no new
+   artifact, so every service carries topic classes it may not use — accepted to
+   keep the dependency graph simple.
+
+### Topic annotations
+
+New annotations (in `ringloom-framework-core`, source/class retention like the
+existing set):
+
+| Annotation | Target | Purpose |
+|---|---|---|
+| `@RingloomTopicPublisher` | interface | Declares a topic publisher. Carries the topic name and optional default config (roll scheme, retention) sent on first registration. |
+| `@RingloomTopicPublish` | method | Declares a publish method. Carries serializer, ack mode (`FIRE_AND_FORGET` default, or `REPLICATE_ONCE`), and routing/error policy. |
+| `@RingloomTopicHandler` | method | Declares a subscription. Carries the topic name, start position (`EARLIEST`/`LATEST`), serializer, and optional partition-key source for partitioned dispatch. |
+
+Generated artifacts:
+
+1. `*_RingloomTopicPublisher` proxy implementations (one per publisher
+   interface) holding the registered native `TopicPublisher` handle, the
+   serializer encoder, and the ack registry slot.
+2. Dispatcher entries for `@RingloomTopicHandler` methods, merged into the
+   existing generated dispatcher keyed by topic id rather than template id. The
+   dispatcher exposes a `dispatchTopic(topicId, payload, context)` path in
+   addition to `dispatch(templateId, ...)`.
+
+The processor should reject a `@RingloomTopicPublish` method on a non-publisher
+interface, duplicate topic names, and handler/publisher topics with unknown
+serializers, mirroring existing template-id validation.
+
+### Topic YAML configuration
+
+```yaml
+ringloom:
+  topics:
+    enabled: true                      # master switch; false disables all topic code
+    coalesceWithMessages: true         # poll topics inside the message event loop
+    prefetcher:
+      cpuAffinity: 2                   # optional pin for the maintenance thread
+      pollLimit: 64                    # queues advanced per maintenance tick
+    publisherDefaults:
+      rollScheme: FAST_DAILY
+      retentionCycles: 0               # 0 = keep all
+    ackFeedbackIntervalMicros: 200     # mirrors broker throttle, informational
+  handlers:
+    quotes:
+      topic: quotes
+      start: earliest                  # earliest | latest
+      serializer: sbe
+      partitionKey: "instrumentId"     # optional, generated extractor
+```
+
+Core configuration records:
+
+| Type | Role |
+|---|---|
+| `TopicsRuntimeConfig` | Master switch, coalesce flag, prefetcher thread settings. |
+| `TopicPublisherDefaults` | Default `ringloom_topic_config_t` geometry applied on registration. |
+| `TopicHandlerConfig` | Per-handler topic name, start position, serializer, partition key. |
+
+When `topics.enabled` is `false`, `pollTopics()` is a no-op, no prefetcher thread
+is started, and generated publisher/handler registration is skipped.
+
+### Topic runtime and data flow
+
+`RingloomRuntime` owns a `TopicRuntime` sub-component, started only when
+`topics.enabled` is `true`. Responsibilities:
+
+1. Register all `@RingloomTopicPublisher` publications at startup (one native
+   `TopicPublisher` handle per topic) and create generated publisher proxies.
+2. Register all `@RingloomTopicHandler` subscriptions at startup (one native
+   `TopicSubscription` handle per topic) and record their topic id + handler.
+3. Own and start the maintenance/prefetcher thread.
+4. Provide `pollTopics()` to advance tailers and dispatch.
+5. Advance `replicated_hwm` per publisher from control-plane ack feedback and
+   complete pending `AckCallback`s.
+6. Re-target publishers on `TopicLeaderChanged` (delegated to the native handle).
+
+Inbound topic message:
+
+1. `pollTopics()` (or the coalesced message loop) polls each subscription's
+   native tailer, receiving a borrowed payload + index.
+2. The poll path wraps the payload in a reusable `TopicMessage` and feeds it to
+   the configured `MessageExecutionPolicy` via the `TopicMessageSource` adapter.
+3. For `consumerThread`, the generated topic dispatcher reads the topic id,
+   wraps/decodes the payload, and invokes the handler with a reusable
+   `TopicContext`.
+4. For `partitionedWorkers`, generated ingress extracts the configured partition
+   key from the borrowed payload and copies into the worker slot, exactly as for
+   service messages.
+5. For `virtualThreads`, ingress decodes into task-owned state and submits
+   bounded virtual-thread work.
+6. The borrowed tailer payload is valid only until the next poll of that
+   subscription; async dispatch copies before returning from the poll callback,
+   matching the existing borrowed-memory contract.
+
+Outbound topic publish (fire_and_forget):
+
+1. Generated proxy encodes the typed payload via the serializer encoder.
+2. Proxy calls `TopicPublisher.publish(payload)` (zero-copy claim path where
+   possible).
+3. The frame is offered to the topic-leader publication; status is returned.
+
+Outbound topic publish (replicate_once):
+
+1. Generated proxy encodes the payload and publishes with `ack_mode =
+   replicate_once`, receiving the assigned `publish_index`.
+2. Before returning, the proxy registers the caller's `AckCallback` (and opaque
+   caller context) keyed by `publish_index` in the publisher's ack registry.
+3. The control loop, on each `TopicAckFeedback{replicated_hwm}` frame, completes
+   every pending callback with index `<= replicated_hwm`. Completion runs on the
+   control thread; callbacks must be short.
+
+### Zero-allocation topic hot path
+
+| Path | Zero allocations | Zero copy |
+|---|---|---|
+| Subscriber handler with flyweight payload, `consumerThread` | Yes | Yes (tailer borrow valid for the call) |
+| Subscriber handler, `partitionedWorkers` | Yes | No (one copy into the worker slot, as today) |
+| `fire_and_forget` publish with `DirectPublishContext` + zero-copy serializer | Yes | Yes (encode directly into the claim) |
+| `replicate_once` publish with pooled ack slot and reusable callback/context | Yes | Send path zero-copy; ack completion allocates nothing on the hot path |
+| Virtual-thread / ergonomic overloads | No guarantee | No guarantee |
+
+The topic poll path must follow the same rules as the message hot path: no boxed
+keys, no per-message map lookups, reusable per-thread `TopicContext` and
+flyweights, pre-created subscriptions and registries at startup.
+
+### Topic error handling
+
+Topic hot-path methods return integer status codes, consistent with the existing
+model. Expected outcomes map to existing `RingloomStatus` values (buffer full,
+backpressure, leader unreachable) plus topic-specific ones:
+
+1. `TOPIC_LEADER_UNAVAILABLE` — no current topic leader or endpoint unresolved.
+2. `TOPIC_DISABLED` — topics not enabled on the broker or the runtime.
+3. `TOPIC_CONFIG_MISMATCH` — registration collided with an existing topic's
+   immutable config.
+
+Acknowledgement failure is reported through the `AckCallback` with a status
+(`ACK_TIMEOUT`, `SHUTDOWN`, or `LEADER_CHANGED`) rather than an exception, since
+acks complete asynchronously on the control thread.
+
+### Topic observability
+
+The framework surfaces topic metrics through the existing `RingloomMetrics`
+facade plus a small set of native counters (published in service metadata by the
+native runtime):
+
+1. Per-publisher: `topic.publishes.offered`, `topic.publishes.f&f`,
+   `topic.publishes.replicate_once`, `topic.ack.hwm`, `topic.ack.pending`.
+2. Per-subscription: `topic.poll.messages`, `topic.poll.idle`,
+   `topic.lag.behind_leader` (from the tailer index vs broker HWM, when exposed).
+3. Prefetcher: `topic.maintenance.work_units`, `topic.maintenance.page_faults`.
+
 ## Example generated flow
 
 Startup:
@@ -1017,6 +1246,38 @@ Virtual-thread blocking request/response:
 4. Proxy unregisters pending state and returns the response or throws the mapped
    exception.
 
+Inbound topic message (subscriber):
+
+1. `pollTopics()` (or the coalesced message loop) polls each open subscription's
+   native tailer, receiving a borrowed payload and index.
+2. The poll path wraps the payload in a reusable `TopicMessage` and feeds it to
+   the configured `MessageExecutionPolicy` via the `TopicMessageSource` adapter.
+3. For `consumerThread`, the generated topic dispatcher reads the topic id, wraps
+   or decodes the payload, and invokes the `@RingloomTopicHandler` with a
+   reusable `TopicContext`.
+4. For `partitionedWorkers`, generated ingress extracts the configured partition
+   key, copies into the worker slot, and returns from the poll callback.
+5. For `virtualThreads`, ingress decodes into task-owned state and submits bounded
+   virtual-thread work.
+6. The borrowed tailer payload is released on the next poll of that subscription.
+
+Outbound topic publish (fire_and_forget):
+
+1. Generated proxy encodes the typed payload via the serializer encoder.
+2. Proxy publishes with `ack_mode = fire_and_forget`; the frame is offered to the
+   topic-leader publication.
+3. Status is returned to the caller. No ack tracking.
+
+Outbound topic publish (replicate_once):
+
+1. Generated proxy encodes the payload and publishes with
+   `ack_mode = replicate_once`, receiving the assigned `publish_index`.
+2. Proxy registers the caller's `AckCallback` keyed by `publish_index` before
+   returning.
+3. The control loop advances `replicated_hwm` from `TopicAckFeedback` frames and
+   completes every pending callback with index `<= replicated_hwm`.
+4. On leader change or shutdown, pending callbacks are completed with a status.
+
 ## Implementation phases
 
 Each phase has a detailed implementation specification under `docs/java/impl/`.
@@ -1043,3 +1304,11 @@ Each phase has a detailed implementation specification under `docs/java/impl/`.
     [10-message-execution-modes.md](impl/10-message-execution-modes.md).
 11. **Request/response**:
     [11-request-response.md](impl/11-request-response.md).
+12. **Topic runtime & polling**:
+    [12-topic-runtime-and-polling.md](impl/12-topic-runtime-and-polling.md).
+13. **Topic dispatch**:
+    [13-topic-dispatch.md](impl/13-topic-dispatch.md).
+14. **Topic annotation model & codegen**:
+    [14-topic-annotation-model.md](impl/14-topic-annotation-model.md).
+15. **Topic publisher runtime & ack registry**:
+    [15-topic-publisher-runtime.md](impl/15-topic-publisher-runtime.md).

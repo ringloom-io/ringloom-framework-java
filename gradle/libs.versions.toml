@@ -1,5 +1,5 @@
 [versions]
-ringloomJavaBindings = "0.2.1"
+ringloomJavaBindings = "0.3.0"
 agrona = "2.4.1"
 avajeInject = "12.5"
 fory = "0.17.0"
