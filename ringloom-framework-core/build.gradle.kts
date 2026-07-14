@@ -50,3 +50,21 @@ tasks.register<JavaExec>("jmh") {
         }
     }
 }
+
+// Allow the native RingLoom broker binary and repo root to be supplied so topic integration tests
+// (gated by @EnabledIfSystemProperty) can run. When absent the tests are cleanly skipped.
+tasks.withType<Test>().configureEach {
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    systemProperty(
+        "ringloom.brokerBin",
+        providers.systemProperty("ringloom.brokerBin")
+            .orElse(providers.gradleProperty("ringloom.brokerBin"))
+            .orNull
+    )
+    systemProperty(
+        "ringloom.repoRoot",
+        providers.systemProperty("ringloom.repoRoot")
+            .orElse(providers.gradleProperty("ringloom.repoRoot"))
+            .orNull
+    )
+}

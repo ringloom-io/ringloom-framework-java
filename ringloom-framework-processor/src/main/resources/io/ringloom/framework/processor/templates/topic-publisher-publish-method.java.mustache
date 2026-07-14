@@ -1,0 +1,14 @@
+
+  @Override
+  public int {{methodName}}({{payloadType}} {{payloadName}}) {
+    String serializerName = runtime.resolveSerializerName("{{serializer}}");
+    MessageEncoder<{{payloadType}}> encoder = serializers.encoder(serializerName, {{payloadType}}.class);
+    if (encoder == null) {
+      throw new IllegalStateException("missing topic publisher encoder for " + serializerName);
+    }
+    EncodeContext encodeContext = encodeContexts.get();
+    MemorySegment scratch = claimScratch(encoder.encodedLength({{payloadName}}, encodeContext));
+    encodeContext.buffer().wrap(scratch);
+    encoder.encode({{payloadName}}, encodeContext.buffer(), encodeContext);
+    return handle.publish(scratch);
+  }

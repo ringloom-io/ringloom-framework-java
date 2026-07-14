@@ -55,6 +55,41 @@ public final class ApplicationSourceGenerator {
             List<Handler> handlers,
             List<Schedule> schedules,
             TypeElement origin) {
+        generate(
+                pkg,
+                appName,
+                dispatcherName,
+                service,
+                clients,
+                components,
+                handlers,
+                schedules,
+                List.of(),
+                List.of(),
+                null,
+                origin);
+    }
+
+    /**
+     * Generates the application metadata, including optional topic bindings.
+     *
+     * @param topicPublishers        validated topic publishers (may be empty)
+     * @param topicHandlers          validated topic handlers (may be empty)
+     * @param topicDispatcherName    the generated topic dispatcher class name, or {@code null} when none
+     */
+    public void generate(
+            String pkg,
+            String appName,
+            String dispatcherName,
+            String service,
+            List<TypeElement> clients,
+            List<TypeElement> components,
+            List<Handler> handlers,
+            List<Schedule> schedules,
+            List<io.ringloom.framework.processor.model.TopicPublisher> topicPublishers,
+            List<io.ringloom.framework.processor.model.TopicHandler> topicHandlers,
+            String topicDispatcherName,
+            TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
         try {
             StringBuilder clientBindings = new StringBuilder();
@@ -74,34 +109,97 @@ public final class ApplicationSourceGenerator {
                                 "comma",
                                 i + 1 == clients.size() ? "" : ",")));
             }
+            Map<String, Object> model = new java.util.HashMap<>();
+            model.put("packageName", pkg);
+            model.put("appName", appName);
+            model.put("dispatcherName", dispatcherName);
+            model.put("serviceName", SourceHelpers.escape(service));
+            model.put("clientBindingSources", clientBindings.toString());
+            model.put("componentTypeSources", componentTypeSources(components));
+            model.put("serializerRegistrationSources", serializerRegistrationSources(clients, handlers));
+            model.put("partitionKeyExtractorSources", partitionKeyExtractorSources(handlers));
+            model.put("scheduleRegistrationSources", scheduleRegistrationSources(schedules));
+            // Topic bindings.
+            boolean hasTopicPublishers = !topicPublishers.isEmpty();
+            boolean hasTopicHandlers = !topicHandlers.isEmpty();
+            boolean hasTopicDispatcher = topicDispatcherName != null;
+            model.put("hasTopicBindings", hasTopicPublishers);
+            model.put("hasTopicHandlers", hasTopicHandlers);
+            model.put("hasTopicDispatcher", hasTopicDispatcher);
+            model.put("topicDispatcherName", topicDispatcherName == null ? "" : topicDispatcherName);
+            model.put("topicPublisherBindingSources", topicPublisherBindings(topicPublishers));
+            model.put("topicHandlerBindingSources", topicHandlerBindings(topicHandlers));
+            model.put("initialTopicIds", initialTopicIds(topicHandlers));
             new SourceWriter(ctx)
-                    .writeSourceFile(
-                            qualifiedName,
-                            origin,
-                            templates.render(
-                                    "application.java.mustache",
-                                    Map.of(
-                                            "packageName",
-                                            pkg,
-                                            "appName",
-                                            appName,
-                                            "dispatcherName",
-                                            dispatcherName,
-                                            "serviceName",
-                                            SourceHelpers.escape(service),
-                                            "clientBindingSources",
-                                            clientBindings.toString(),
-                                            "componentTypeSources",
-                                            componentTypeSources(components),
-                                            "serializerRegistrationSources",
-                                            serializerRegistrationSources(clients, handlers),
-                                            "partitionKeyExtractorSources",
-                                            partitionKeyExtractorSources(handlers),
-                                            "scheduleRegistrationSources",
-                                            scheduleRegistrationSources(schedules))));
+                    .writeSourceFile(qualifiedName, origin, templates.render("application.java.mustache", model));
         } catch (IOException ex) {
             ctx.error(origin, "failed to generate application: " + ex.getMessage());
         }
+    }
+
+    private String topicPublisherBindings(List<io.ringloom.framework.processor.model.TopicPublisher> topicPublishers)
+            throws IOException {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < topicPublishers.size(); i++) {
+            io.ringloom.framework.processor.model.TopicPublisher publisher = topicPublishers.get(i);
+            String publisherType =
+                    publisher.publisherInterface().getQualifiedName().toString();
+            io.ringloom.framework.annotation.RingloomTopicPublisher annotation = publisher.annotation();
+            out.append(templates.render(
+                    "application-topic-publisher-binding.java.mustache",
+                    Map.of(
+                            "publisherType",
+                            publisherType,
+                            "generatedPublisherName",
+                            publisher.publisherInterface().getSimpleName() + "_RingloomTopicPublisher",
+                            "topicName",
+                            SourceHelpers.escape(annotation.topic()),
+                            "clientAlias",
+                            SourceHelpers.escape(annotation.client()),
+                            "rollScheme",
+                            SourceHelpers.escape(annotation.rollScheme()),
+                            "retentionCycles",
+                            annotation.retentionCycles(),
+                            "comma",
+                            i + 1 == topicPublishers.size() ? "" : ",")));
+        }
+        return out.toString();
+    }
+
+    private String topicHandlerBindings(List<io.ringloom.framework.processor.model.TopicHandler> topicHandlers)
+            throws IOException {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < topicHandlers.size(); i++) {
+            io.ringloom.framework.processor.model.TopicHandler handler = topicHandlers.get(i);
+            io.ringloom.framework.annotation.RingloomTopicHandler annotation = handler.annotation();
+            String partitionKey = handler.partitionKey();
+            out.append(templates.render(
+                    "application-topic-handler-binding.java.mustache",
+                    Map.of(
+                            "topicName",
+                            SourceHelpers.escape(annotation.topic()),
+                            "start",
+                            annotation.start().name(),
+                            "serializer",
+                            SourceHelpers.escape(annotation.serializer()),
+                            "partitionKey",
+                            partitionKey == null ? "" : SourceHelpers.escape(partitionKey),
+                            "comma",
+                            i + 1 == topicHandlers.size() ? "" : ",")));
+        }
+        return out.toString();
+    }
+
+    private String initialTopicIds(List<io.ringloom.framework.processor.model.TopicHandler> topicHandlers) {
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (io.ringloom.framework.processor.model.TopicHandler handler : topicHandlers) {
+            seen.add(handler.annotation().topic());
+        }
+        java.util.List<String> zeros = new java.util.ArrayList<>();
+        for (int i = 0; i < seen.size(); i++) {
+            zeros.add("0L");
+        }
+        return String.join(", ", zeros);
     }
 
     public String serializerRegistrationSources(List<TypeElement> clients, List<Handler> handlers) {

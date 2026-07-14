@@ -8,19 +8,28 @@ import io.ringloom.framework.annotation.RingloomPartitionKey;
 import io.ringloom.framework.annotation.RingloomRequest;
 import io.ringloom.framework.annotation.RingloomSchedule;
 import io.ringloom.framework.annotation.RingloomServiceComponent;
+import io.ringloom.framework.annotation.RingloomTopicHandler;
+import io.ringloom.framework.annotation.RingloomTopicPublish;
+import io.ringloom.framework.annotation.RingloomTopicPublisher;
 import io.ringloom.framework.processor.generation.ApplicationSourceGenerator;
 import io.ringloom.framework.processor.generation.ClientSourceGenerator;
 import io.ringloom.framework.processor.generation.DispatcherSourceGenerator;
 import io.ringloom.framework.processor.generation.ProviderSourceGenerator;
 import io.ringloom.framework.processor.generation.SourceWriter;
+import io.ringloom.framework.processor.generation.TopicDispatcherSourceGenerator;
+import io.ringloom.framework.processor.generation.TopicPublisherSourceGenerator;
 import io.ringloom.framework.processor.model.Handler;
 import io.ringloom.framework.processor.model.Schedule;
 import io.ringloom.framework.processor.model.SourceHelpers;
+import io.ringloom.framework.processor.model.TopicHandler;
+import io.ringloom.framework.processor.model.TopicPublisher;
 import io.ringloom.framework.processor.validation.ClientValidator;
 import io.ringloom.framework.processor.validation.HandlerValidator;
 import io.ringloom.framework.processor.validation.PartitionKeyValidator;
 import io.ringloom.framework.processor.validation.ScheduleValidator;
 import io.ringloom.framework.processor.validation.TemplateRules;
+import io.ringloom.framework.processor.validation.TopicHandlerValidator;
+import io.ringloom.framework.processor.validation.TopicPublisherValidator;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -50,10 +59,14 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
     private HandlerValidator handlerValidator;
     private ScheduleValidator scheduleValidator;
     private PartitionKeyValidator partitionKeyValidator;
+    private TopicPublisherValidator topicPublisherValidator;
+    private TopicHandlerValidator topicHandlerValidator;
     private ClientSourceGenerator clientGenerator;
     private DispatcherSourceGenerator dispatcherGenerator;
     private ApplicationSourceGenerator applicationGenerator;
     private ProviderSourceGenerator providerGenerator;
+    private TopicPublisherSourceGenerator topicPublisherGenerator;
+    private TopicDispatcherSourceGenerator topicDispatcherGenerator;
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
@@ -64,7 +77,10 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                 RingloomServiceComponent.class.getCanonicalName(),
                 RingloomHandler.class.getCanonicalName(),
                 RingloomPartitionKey.class.getCanonicalName(),
-                RingloomSchedule.class.getCanonicalName());
+                RingloomSchedule.class.getCanonicalName(),
+                RingloomTopicPublisher.class.getCanonicalName(),
+                RingloomTopicPublish.class.getCanonicalName(),
+                RingloomTopicHandler.class.getCanonicalName());
     }
 
     @Override
@@ -75,10 +91,14 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         this.handlerValidator = new HandlerValidator(ctx);
         this.scheduleValidator = new ScheduleValidator(ctx);
         this.partitionKeyValidator = new PartitionKeyValidator(ctx);
+        this.topicPublisherValidator = new TopicPublisherValidator(ctx);
+        this.topicHandlerValidator = new TopicHandlerValidator(ctx);
         this.clientGenerator = new ClientSourceGenerator(ctx, templates);
         this.dispatcherGenerator = new DispatcherSourceGenerator(ctx, templates);
         this.applicationGenerator = new ApplicationSourceGenerator(ctx, templates);
         this.providerGenerator = new ProviderSourceGenerator(ctx, templates);
+        this.topicPublisherGenerator = new TopicPublisherSourceGenerator(ctx, templates);
+        this.topicDispatcherGenerator = new TopicDispatcherSourceGenerator(ctx, templates);
     }
 
     @Override
@@ -90,10 +110,20 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         List<TypeElement> components = componentTypes(roundEnv);
         List<TypeElement> applications =
                 SourceHelpers.types(roundEnv.getElementsAnnotatedWith(RingloomApplication.class));
+        List<TypeElement> topicPublisherInterfaces =
+                SourceHelpers.types(roundEnv.getElementsAnnotatedWith(RingloomTopicPublisher.class));
         clients.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
         components.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
         applications.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
+        topicPublisherInterfaces.sort(
+                Comparator.comparing(t -> t.getQualifiedName().toString()));
 
+        List<TopicPublisher> topicPublishers = new ArrayList<>();
+        for (TypeElement publisherInterface : topicPublisherInterfaces) {
+            TopicPublisher topicPublisher = topicPublisherValidator.validate(publisherInterface);
+            topicPublishers.add(topicPublisher);
+            topicPublisherGenerator.generate(topicPublisher);
+        }
         for (TypeElement client : clients) {
             clientValidator.validate(client);
             clientGenerator.generate(client);
@@ -106,16 +136,21 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                         "multiple @RingloomApplication types require an explicit single application");
                 return true;
             }
-            generateApplication(application, clients, components);
+            generateApplication(application, clients, components, topicPublishers);
         }
         generated = true;
         return false;
     }
 
-    private void generateApplication(TypeElement application, List<TypeElement> clients, List<TypeElement> components) {
+    private void generateApplication(
+            TypeElement application,
+            List<TypeElement> clients,
+            List<TypeElement> components,
+            List<TopicPublisher> topicPublishers) {
         Map<Integer, ExecutableElement> handlerTemplateIds = new HashMap<>();
         List<Handler> handlers = new ArrayList<>();
         List<Schedule> schedules = new ArrayList<>();
+        List<TopicHandler> topicHandlers = new ArrayList<>();
         for (TypeElement component : components) {
             for (Element enclosed : component.getEnclosedElements()) {
                 RingloomHandler handlerAnnotation = enclosed.getAnnotation(RingloomHandler.class);
@@ -137,11 +172,16 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                     scheduleValidator.validate(method, scheduleAnnotation);
                     schedules.add(new Schedule(component, method, scheduleAnnotation));
                 }
+                RingloomTopicHandler topicHandlerAnnotation = enclosed.getAnnotation(RingloomTopicHandler.class);
+                if (topicHandlerAnnotation != null && enclosed instanceof ExecutableElement method) {
+                    topicHandlers.add(topicHandlerValidator.validate(component, method, topicHandlerAnnotation));
+                }
             }
         }
         handlers.sort(Comparator.comparingInt(Handler::templateId));
         schedules.sort(Comparator.comparing(schedule -> schedule.component().getQualifiedName() + "."
                 + schedule.method().getSimpleName()));
+        topicHandlers.sort(Comparator.comparing(h -> h.annotation().topic()));
 
         String pkg = SourceHelpers.packageName(ctx.elementUtils(), application);
         String appSimple = application.getSimpleName().toString();
@@ -149,9 +189,24 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         String dispatcherName = appSimple + "_RingloomDispatcher";
         String appName = appSimple + "_RingloomApplication";
         String providerName = appSimple + "_RingloomApplicationProvider";
+        String topicDispatcherName = topicHandlers.isEmpty() ? null : appSimple + "_RingloomTopicDispatcher";
         dispatcherGenerator.generate(pkg, dispatcherName, handlers, application);
+        if (topicDispatcherName != null) {
+            topicDispatcherGenerator.generate(pkg, topicDispatcherName, topicHandlers, application);
+        }
         applicationGenerator.generate(
-                pkg, appName, dispatcherName, service, clients, components, handlers, schedules, application);
+                pkg,
+                appName,
+                dispatcherName,
+                service,
+                clients,
+                components,
+                handlers,
+                schedules,
+                topicPublishers,
+                topicHandlers,
+                topicDispatcherName,
+                application);
         providerGenerator.generate(pkg, providerName, appName, application);
         new SourceWriter(ctx).writeServiceFile(pkg, providerName);
     }
@@ -170,6 +225,12 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         }
         for (Element schedule : roundEnv.getElementsAnnotatedWith(RingloomSchedule.class)) {
             Element enclosing = schedule.getEnclosingElement();
+            if (enclosing instanceof TypeElement component) {
+                result.putIfAbsent(component.getQualifiedName().toString(), component);
+            }
+        }
+        for (Element topicHandler : roundEnv.getElementsAnnotatedWith(RingloomTopicHandler.class)) {
+            Element enclosing = topicHandler.getEnclosingElement();
             if (enclosing instanceof TypeElement component) {
                 result.putIfAbsent(component.getQualifiedName().toString(), component);
             }

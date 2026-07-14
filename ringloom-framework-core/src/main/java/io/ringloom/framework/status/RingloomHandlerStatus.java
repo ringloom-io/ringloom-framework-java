@@ -35,6 +35,10 @@ public final class RingloomHandlerStatus {
      * A required native symbol or ABI hook is not available.
      */
     public static final int NATIVE_SYMBOL_UNAVAILABLE = 65_541;
+    /**
+     * A topic message referenced a topic id with no registered generated handler.
+     */
+    public static final int UNKNOWN_TOPIC = 65_542;
 
     private RingloomHandlerStatus() {}
 }

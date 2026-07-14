@@ -5,6 +5,9 @@ import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.generated.GeneratedTopicDispatcher;
+import io.ringloom.framework.generated.GeneratedTopicHandlerBinding;
+import io.ringloom.framework.generated.GeneratedTopicPublisherBinding;
 import io.ringloom.framework.serialization.DecodeContext;
 import io.ringloom.framework.serialization.FlyweightDecoder;
 import io.ringloom.framework.serialization.MessageDecoder;
@@ -17,6 +20,8 @@ public final class {{appName}} implements GeneratedRingloomApplication {
   private SerializerRegistry serializers = SerializerRegistry.EMPTY;
   private final ThreadLocal<DecodeContext> partitionDecodeContexts = ThreadLocal.withInitial(DecodeContext::new);
   private {{dispatcherName}} dispatcher;
+{{#hasTopicDispatcher}}  private {{topicDispatcherName}} topicDispatcher;
+{{/hasTopicDispatcher}}
 
   public {{appName}}() {
     this(java.util.Map.of());
@@ -78,6 +83,39 @@ public final class {{appName}} implements GeneratedRingloomApplication {
     }
     return dispatcher;
   }
+{{#hasTopicBindings}}
+  @Override
+  public List<GeneratedTopicPublisherBinding> topicPublishers() {
+    return List.of(
+{{{topicPublisherBindingSources}}}    );
+  }
+{{/hasTopicBindings}}
+{{#hasTopicHandlers}}
+  @Override
+  public List<GeneratedTopicHandlerBinding> topicHandlers() {
+    return List.of(
+{{{topicHandlerBindingSources}}}    );
+  }
+{{/hasTopicHandlers}}
+{{#hasTopicDispatcher}}
+  @Override
+  public GeneratedTopicDispatcher topicDispatcher() {
+    return generatedTopicDispatcher();
+  }
+
+  private {{topicDispatcherName}} generatedTopicDispatcher() {
+    if (topicDispatcher == null) {
+      // Topic ids are zero until the runtime calls initializeTopicIds(...) after registration.
+      topicDispatcher = new {{topicDispatcherName}}(generatedComponents(), new long[] { {{{initialTopicIds}}} });
+    }
+    return topicDispatcher;
+  }
+
+  @Override
+  public void initializeTopicIds(long[] resolvedTopicIds) {
+    generatedTopicDispatcher().initializeTopicIds(resolvedTopicIds);
+  }
+{{/hasTopicDispatcher}}
 
   private <T> T component(Class<T> type) {
     return type.cast(generatedComponents().get(type));

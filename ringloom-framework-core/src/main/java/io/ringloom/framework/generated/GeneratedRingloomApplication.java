@@ -122,6 +122,64 @@ public interface GeneratedRingloomApplication {
     }
 
     /**
+     * Returns the generated topic publisher bindings exposed by the application.
+     *
+     * @return the generated topic publisher bindings
+     */
+    default List<GeneratedTopicPublisherBinding> topicPublishers() {
+        return List.of();
+    }
+
+    /**
+     * Returns the generated topic handler bindings exposed by the application.
+     *
+     * @return the generated topic handler bindings
+     */
+    default List<GeneratedTopicHandlerBinding> topicHandlers() {
+        return List.of();
+    }
+
+    /**
+     * Returns the generated topic dispatcher, or {@code null} when there are no
+     * {@code @RingloomTopicHandler} methods.
+     *
+     * @return the generated topic dispatcher, or {@code null}
+     */
+    default GeneratedTopicDispatcher topicDispatcher() {
+        return null;
+    }
+
+    /**
+     * Supplies the runtime-resolved broker topic ids, in declaration order, to the generated topic
+     * dispatcher. The runtime invokes this after topic registration completes so the dispatcher's
+     * topic-id switch can match inbound messages.
+     *
+     * @param resolvedTopicIds the broker-assigned topic ids in declaration order
+     */
+    default void initializeTopicIds(long[] resolvedTopicIds) {}
+
+    /**
+     * Returns generated partition-key extractors for topic handlers, keyed by broker-assigned topic id.
+     *
+     * <p>The keys are resolved at runtime (the broker assigns topic ids during publication/subscription
+     * registration); the generated application populates the map during runtime startup.
+     *
+     * @return topic-id to partition-key extractor map
+     */
+    default Map<Long, GeneratedPartitionKeyExtractor> topicPartitionKeyExtractors() {
+        return Map.of();
+    }
+
+    /**
+     * Returns whether the generated application requires any topic bindings to be registered.
+     *
+     * @return {@code true} when the application has topic publishers or a topic dispatcher
+     */
+    default boolean requiresTopicBindings() {
+        return !topicPublishers().isEmpty() || topicDispatcher() != null;
+    }
+
+    /**
      * Invoked after the runtime has started and all generated clients are available.
      *
      * @param runtime the started runtime

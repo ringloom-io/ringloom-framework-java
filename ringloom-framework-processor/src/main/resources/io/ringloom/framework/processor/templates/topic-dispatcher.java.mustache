@@ -1,0 +1,86 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.generated.GeneratedTopicDispatcher;
+import io.ringloom.framework.serialization.DecodeContext;
+import io.ringloom.framework.serialization.FlyweightDecoder;
+import io.ringloom.framework.serialization.MessageDecoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.framework.topic.TopicContext;
+import io.ringloom.framework.topic.TopicMessage;
+import java.util.Objects;
+
+public final class {{dispatcherName}} implements GeneratedTopicDispatcher {
+  private SerializerRegistry serializers = SerializerRegistry.EMPTY;
+  private final ThreadLocal<DecodeContext> decodeContexts = ThreadLocal.withInitial(DecodeContext::new);
+
+  // Resolved broker-assigned topic ids (set at runtime by the generated application).
+{{#topicIds}}
+  private long {{fieldName}}Id;
+{{/topicIds}}
+
+{{#handlerFields}}
+  private final {{{componentType}}} {{fieldName}};
+{{/handlerFields}}
+
+  public {{dispatcherName}}() {
+    this(java.util.Map.of(), new long[]{ {{{initialTopicIds}}} });
+  }
+
+  public {{dispatcherName}}(java.util.Map<Class<?>, ?> components, long[] topicIds) {
+{{#handlerFields}}
+    this.{{fieldName}} = component(components, {{{componentType}}}.class);
+{{/handlerFields}}
+{{#topicIds}}
+    this.{{fieldName}}Id = topicIds[{{index}}];
+{{/topicIds}}
+  }
+
+  public void initializeSerializers(SerializerRegistry serializers) {
+    this.serializers = Objects.requireNonNull(serializers, "serializers");
+  }
+
+  /**
+   * Supplies the runtime-resolved broker topic ids, in declaration order. Called once by the runtime
+   * after topic registration completes.
+   */
+  public void initializeTopicIds(long[] resolvedTopicIds) {
+{{#topicIds}}
+    this.{{fieldName}}Id = resolvedTopicIds[{{index}}];
+{{/topicIds}}
+  }
+
+  @Override
+  public int onTopicMessage(TopicMessage message, TopicContext context) {
+    long topicId = context.topicId();
+    return dispatchTopic(topicId, context);
+  }
+
+  @Override
+  public int onContextTopicMessage(TopicContext context) {
+    return dispatchTopic(context.topicId(), context);
+  }
+
+  private int dispatchTopic(long topicId, TopicContext context) {
+{{{caseSources}}}
+    return RingloomHandlerStatus.UNKNOWN_TOPIC;
+  }
+
+  private static <T> T component(java.util.Map<Class<?>, ?> components, Class<T> type) {
+    Object component = components.get(type);
+    if (component != null) {
+      return type.cast(component);
+    }
+    return instantiate(type);
+  }
+
+  private static <T> T instantiate(Class<T> type) {
+    try {
+      java.lang.reflect.Constructor<T> constructor = type.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      return constructor.newInstance();
+    } catch (ReflectiveOperationException ex) {
+      throw new IllegalStateException("failed to create RingLoom component " + type.getName(), ex);
+    }
+  }
+}

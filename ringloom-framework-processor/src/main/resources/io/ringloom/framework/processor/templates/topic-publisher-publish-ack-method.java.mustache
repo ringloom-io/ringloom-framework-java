@@ -1,0 +1,26 @@
+
+  @Override
+  public int {{methodName}}({{payloadType}} {{payloadName}}, AckCallback callback, Object userContext) {
+    Objects.requireNonNull(callback, "callback");
+    String serializerName = runtime.resolveSerializerName("{{serializer}}");
+    MessageEncoder<{{payloadType}}> encoder = serializers.encoder(serializerName, {{payloadType}}.class);
+    if (encoder == null) {
+      throw new IllegalStateException("missing topic publisher encoder for " + serializerName);
+    }
+    EncodeContext encodeContext = encodeContexts.get();
+    MemorySegment scratch = claimScratch(encoder.encodedLength({{payloadName}}, encodeContext));
+    encodeContext.buffer().wrap(scratch);
+    encoder.encode({{payloadName}}, encodeContext.buffer(), encodeContext);
+    long[] outIndex = outIndexHolder.get();
+    int status = handle.publish(scratch, TopicAckMode.REPLICATE_ONCE, 0L, outIndex);
+    if (status != RingloomStatus.OK) {
+      return status;
+    }
+    if (acks != null) {
+      long epoch = handle.leaderEpoch();
+      if (!acks.register(outIndex[0], epoch, callback, userContext, 0L)) {
+        callback.onComplete(outIndex[0], AckStatus.SHUTDOWN, userContext);
+      }
+    }
+    return status;
+  }

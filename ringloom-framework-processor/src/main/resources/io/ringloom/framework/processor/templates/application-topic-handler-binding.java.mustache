@@ -1,0 +1,21 @@
+        new GeneratedTopicHandlerBinding() {
+          @Override
+          public String topic() {
+            return "{{topicName}}";
+          }
+
+          @Override
+          public io.ringloom.service.TopicStart start() {
+            return io.ringloom.service.TopicStart.{{start}};
+          }
+
+          @Override
+          public String serializer() {
+            return "{{serializer}}";
+          }
+
+          @Override
+          public String partitionKey() {
+            return "{{partitionKey}}";
+          }
+        }{{comma}}

@@ -17,6 +17,7 @@ import io.ringloom.framework.eventloop.MessageConsumerAgent;
 import io.ringloom.framework.eventloop.SchedulerAgent;
 import io.ringloom.framework.generated.GeneratedClientBinding;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
+import io.ringloom.framework.generated.GeneratedTopicPublisherBinding;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.metrics.RuntimeRingloomMetrics;
 import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
@@ -70,6 +71,7 @@ public final class RingloomRuntime implements AutoCloseable {
     private MessageExecutionPolicy messageExecutionPolicy;
     private EventLoop controlLoop;
     private EventLoop messageLoop;
+    private io.ringloom.framework.topic.TopicRuntime topicRuntime;
 
     /**
      * Creates a runtime for a generated application and configuration.
@@ -148,9 +150,101 @@ public final class RingloomRuntime implements AutoCloseable {
         }
         generatedApplication.initializeSerializers(serializers);
         messageExecutionPolicy = createMessageExecutionPolicy();
+        if (config.topics().enabled()) {
+            startTopics();
+        }
         generatedApplication.onRuntimeStarted(this);
         if (config.runtime().mode() == RuntimeMode.EXTERNAL) {
             logStartupComplete();
+        }
+    }
+
+    /**
+     * Constructs the topic runtime, registers generated publishers and subscriptions, wires the topic
+     * dispatcher into the execution policy, and starts the prefetcher.
+     */
+    private void startTopics() {
+        topicRuntime = new io.ringloom.framework.topic.TopicRuntime(
+                service,
+                config.topics(),
+                serializers,
+                metrics,
+                logger,
+                config.runtime().mode());
+        if (!generatedApplication.requiresTopicBindings()) {
+            return;
+        }
+        // Register publishers and build ack registries.
+        for (GeneratedTopicPublisherBinding binding : generatedApplication.topicPublishers()) {
+            RingloomClient client = resolveTopicClient(binding.client());
+            io.ringloom.service.TopicPublisher handle =
+                    topicRuntime.registerPublication(client, binding.topic(), binding.topicConfig());
+            long topicId = handle.topicId();
+            io.ringloom.framework.topic.ack.TopicAckRegistry ackRegistry =
+                    new io.ringloom.framework.topic.ack.TopicAckRegistry(1024, metrics, logger);
+            topicRuntime.registerAckRegistry(binding.topic(), topicId, ackRegistry);
+            Object generatedPublisher = binding.create(this, client, serializers, ackRegistry);
+            generatedClients.put(binding.publisherType(), generatedPublisher);
+        }
+        // Register subscriptions for each handler.
+        java.util.List<Long> resolvedTopicIds = new java.util.ArrayList<>();
+        for (io.ringloom.framework.generated.GeneratedTopicHandlerBinding binding :
+                generatedApplication.topicHandlers()) {
+            RingloomClient client = resolveTopicClient("");
+            io.ringloom.service.TopicStart start = resolveTopicStart(binding);
+            io.ringloom.service.TopicSubscription subscription = topicRuntime.subscribe(client, binding.topic(), start);
+            resolvedTopicIds.add(subscription.topicId());
+        }
+        if (!resolvedTopicIds.isEmpty()) {
+            long[] ids = new long[resolvedTopicIds.size()];
+            for (int i = 0; i < ids.length; i++) {
+                ids[i] = resolvedTopicIds.get(i);
+            }
+            generatedApplication.initializeTopicIds(ids);
+        }
+        // Wire the topic dispatcher + source into the execution policy.
+        io.ringloom.framework.generated.GeneratedTopicDispatcher topicDispatcher =
+                generatedApplication.topicDispatcher();
+        if (topicDispatcher != null) {
+            io.ringloom.framework.topic.TopicMessageSource source =
+                    new io.ringloom.framework.topic.TopicMessageSource(messageExecutionPolicy, topicDispatcher, this);
+            topicRuntime.messageSource(source);
+            wireTopicDispatcher(messageExecutionPolicy, topicDispatcher);
+        }
+        topicRuntime.start(Thread.ofPlatform().name("ringloom-topic-prefetcher").factory());
+        // Drive periodic ack-timeout sweeps from the scheduler (on the control thread).
+        topicRuntime.scheduleAckTimeoutSweep(scheduler);
+    }
+
+    private RingloomClient resolveTopicClient(String alias) {
+        if (alias != null && !alias.isBlank() && lowLevelClients.containsKey(alias)) {
+            return lowLevelClients.get(alias);
+        }
+        if (!lowLevelClients.isEmpty()) {
+            return lowLevelClients.values().iterator().next();
+        }
+        // Fall back to a client for this service if none are registered under an alias.
+        return service.createClient(config.service().name());
+    }
+
+    private io.ringloom.service.TopicStart resolveTopicStart(
+            io.ringloom.framework.generated.GeneratedTopicHandlerBinding binding) {
+        io.ringloom.service.TopicStart annotated = binding.start();
+        io.ringloom.framework.config.topic.TopicHandlerConfig override =
+                config.topics().handlers().get(binding.topic());
+        if (override != null && override.start() != null) {
+            return override.start();
+        }
+        return annotated == null ? io.ringloom.service.TopicStart.EARLIEST : annotated;
+    }
+
+    private void wireTopicDispatcher(
+            MessageExecutionPolicy policy, io.ringloom.framework.generated.GeneratedTopicDispatcher topicDispatcher) {
+        switch (policy) {
+            case ConsumerThreadExecutionPolicy consumer -> consumer.topicDispatcher(topicDispatcher);
+            case VirtualThreadExecutionPolicy virtual -> virtual.topicDispatcher(topicDispatcher);
+            case PartitionedWorkerExecutionPolicy partitioned -> partitioned.topicDispatcher(topicDispatcher, null);
+            default -> {}
         }
     }
 
@@ -162,6 +256,9 @@ public final class RingloomRuntime implements AutoCloseable {
     public int pollControl() {
         ensureStarted();
         int controlWork = service.pollControl(config.runtime().control().pollLimit());
+        if (topicRuntime != null) {
+            topicRuntime.pollAckFeedback();
+        }
         if (config.runtime().mode() != RuntimeMode.EXTERNAL) {
             return controlWork;
         }
@@ -172,6 +269,23 @@ public final class RingloomRuntime implements AutoCloseable {
         } catch (Exception ex) {
             throw new IllegalStateException("scheduled control work failed", ex);
         }
+    }
+
+    /**
+     * Advances every topic subscription and dispatches received messages through the wired source.
+     *
+     * <p>In {@code DEDICATED}/{@code SHARED} modes with {@code topics.coalesceWithMessages} enabled,
+     * this is invoked automatically on the message thread. In {@code EXTERNAL} mode the caller must
+     * invoke it (typically alongside {@link #pollControl()} and {@link #pollMessages()}).
+     *
+     * @return the number of topic messages dispatched
+     */
+    public int pollTopics() {
+        ensureStarted();
+        if (topicRuntime == null) {
+            return 0;
+        }
+        return topicRuntime.pollTopics(config.runtime().messages().pollLimit());
     }
 
     /**
@@ -199,11 +313,15 @@ public final class RingloomRuntime implements AutoCloseable {
         ControlAgent controlAgent =
                 new ControlAgent(service, config.runtime().control().pollLimit());
         SchedulerAgent schedulerAgent = new SchedulerAgent(scheduler);
+        Runnable topicPollHook =
+                (topicRuntime != null && config.topics().coalesceWithMessages()) ? this::pollTopics : null;
         MessageConsumerAgent messageAgent = new MessageConsumerAgent(
+                "ringloom-message-consumer-agent",
                 consumer,
                 messageExecutionPolicy,
                 this,
-                config.runtime().messages().pollLimit());
+                config.runtime().messages().pollLimit(),
+                topicPollHook);
         if (mode == RuntimeMode.SHARED) {
             messageLoop = new EventLoop(
                     "ringloom-shared",
@@ -330,6 +448,15 @@ public final class RingloomRuntime implements AutoCloseable {
     }
 
     /**
+     * Returns the persistent-topics runtime, or {@code null} when topics are not enabled.
+     *
+     * @return the topics runtime, or {@code null}
+     */
+    public io.ringloom.framework.topic.TopicRuntime topicRuntime() {
+        return topicRuntime;
+    }
+
+    /**
      * Returns whether generated tracing hooks should call the trace adapter.
      *
      * @return {@code true} when tracing is enabled
@@ -362,6 +489,7 @@ public final class RingloomRuntime implements AutoCloseable {
             closeQuietly(messageLoop, "message event loop");
             closeQuietly(controlLoop, "control event loop");
             closeQuietly(messageExecutionPolicy, "message execution policy");
+            closeQuietly(topicRuntime, "topic runtime");
             requestRegistry.completeAll(RingloomHandlerStatus.SHUTDOWN);
             if (metrics instanceof RuntimeRingloomMetrics runtimeMetrics) {
                 closeQuietly(runtimeMetrics, "metrics");

@@ -12,5 +12,11 @@ public final class Symbols {
     public static final String SBE_SERIALIZER = "sbe";
     public static final String FORY_SERIALIZER = "fory";
 
+    // Persistent-topic symbols.
+    public static final String TOPIC_CONTEXT = "io.ringloom.framework.topic.TopicContext";
+    public static final String TOPIC_MESSAGE = "io.ringloom.framework.topic.TopicMessage";
+    public static final String ACK_CALLBACK = "io.ringloom.framework.topic.ack.AckCallback";
+    public static final String TOPIC_ACK_MODE = "io.ringloom.service.TopicAckMode";
+
     private Symbols() {}
 }

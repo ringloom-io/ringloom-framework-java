@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.ringloom.framework.dispatch;
 
+import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.VirtualThreadExecutionConfig;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
+import io.ringloom.framework.generated.GeneratedTopicDispatcher;
+import io.ringloom.framework.topic.TopicContext;
+import io.ringloom.framework.topic.TopicMessage;
 import io.ringloom.service.RingloomMessage;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
@@ -15,17 +19,42 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Message execution policy that copies payloads and dispatches them onto virtual threads.
+ *
+ * <p>Topic messages are copied to a heap byte[] and dispatched via
+ * {@link GeneratedTopicDispatcher#onContextTopicMessage(TopicContext)} on a virtual thread. Per-topic
+ * order is not preserved across virtual threads (documented limitation).
  */
 public final class VirtualThreadExecutionPolicy implements MessageExecutionPolicy {
     private final GeneratedMessageDispatcher dispatcher;
     private final ExecutorService executor;
     private final Semaphore inFlight;
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final RingloomRuntime runtime;
+    private volatile GeneratedTopicDispatcher topicDispatcher;
 
     public VirtualThreadExecutionPolicy(GeneratedMessageDispatcher dispatcher, VirtualThreadExecutionConfig config) {
+        this(dispatcher, null, config);
+    }
+
+    /**
+     * Constructs a policy optionally bound to a runtime (used to propagate the runtime into copied
+     * topic contexts).
+     *
+     * @param dispatcher       the generated message dispatcher
+     * @param runtime          the owning runtime (may be {@code null})
+     * @param config           the virtual-thread execution configuration
+     */
+    public VirtualThreadExecutionPolicy(
+            GeneratedMessageDispatcher dispatcher, RingloomRuntime runtime, VirtualThreadExecutionConfig config) {
         this.dispatcher = Objects.requireNonNull(dispatcher, "dispatcher");
+        this.runtime = runtime;
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.inFlight = new Semaphore(Objects.requireNonNull(config, "config").maxInFlight());
+    }
+
+    /** Wires the generated topic dispatcher. When {@code null} topic dispatch is unavailable. */
+    public void topicDispatcher(GeneratedTopicDispatcher topicDispatcher) {
+        this.topicDispatcher = topicDispatcher;
     }
 
     @Override
@@ -63,6 +92,38 @@ public final class VirtualThreadExecutionPolicy implements MessageExecutionPolic
                         copy.flags,
                         MemorySegment.ofArray(copy.payload));
                 dispatcher.onContextMessage(context);
+            } finally {
+                inFlight.release();
+            }
+        });
+        return 1;
+    }
+
+    @Override
+    public int onTopicMessage(TopicMessage message, TopicContext ingressContext) {
+        if (closed.get()) {
+            return -1;
+        }
+        GeneratedTopicDispatcher topicDispatcher = this.topicDispatcher;
+        if (topicDispatcher == null) {
+            return io.ringloom.framework.status.RingloomHandlerStatus.UNKNOWN_TOPIC;
+        }
+        RingloomRuntime runtime = ingressContext.runtime();
+        byte[] payload = message.payloadSegment().toArray(ValueLayout.JAVA_BYTE);
+        long topicId = message.topicId();
+        long index = message.index();
+        String topicName = ingressContext.topicName();
+        try {
+            inFlight.acquire();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+        executor.execute(() -> {
+            try {
+                TopicContext context = new TopicContext(runtime);
+                context.updateCopied(topicId, topicName, index, MemorySegment.ofArray(payload));
+                topicDispatcher.onContextTopicMessage(context);
             } finally {
                 inFlight.release();
             }

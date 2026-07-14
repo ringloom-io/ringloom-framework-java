@@ -1,0 +1,24 @@
+    if (topicId == {{topicField}}Id) {
+      DecodeContext decodeContext = decodeContexts.get();
+      String serializerName = context.runtime() == null
+          ? "{{serializer}}"
+          : context.runtime().resolveSerializerName("{{serializer}}");
+      {{{payloadType}}} decoded;
+      try {
+        FlyweightDecoder<{{{payloadType}}}> flyweight =
+            serializers.flyweight(serializerName, {{{payloadType}}}.class);
+        if (flyweight != null) {
+          decoded = flyweight.wrap(context.payloadSegment(), decodeContext);
+        } else {
+          MessageDecoder<{{{payloadType}}}> decoder =
+              serializers.decoder(serializerName, {{{payloadType}}}.class);
+          if (decoder == null) {
+            return RingloomHandlerStatus.SERIALIZATION_ERROR;
+          }
+          decoded = decoder.decode(decodeContext.buffer().wrap(context.payloadSegment()), decodeContext);
+        }
+      } catch (RuntimeException ex) {
+        return RingloomHandlerStatus.SERIALIZATION_ERROR;
+      }
+      return {{fieldName}}.{{methodName}}(decoded, context);
+    }

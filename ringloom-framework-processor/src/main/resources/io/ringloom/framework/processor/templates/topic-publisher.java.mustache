@@ -1,0 +1,59 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.serialization.EncodeContext;
+import io.ringloom.framework.serialization.MessageEncoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.topic.ack.AckCallback;
+import io.ringloom.framework.topic.ack.AckStatus;
+import io.ringloom.framework.topic.ack.TopicAckRegistry;
+import io.ringloom.service.RingloomStatus;
+import io.ringloom.service.TopicAckMode;
+import io.ringloom.service.TopicPublisher;
+import java.lang.foreign.MemorySegment;
+import java.util.Objects;
+
+public final class {{generatedName}} implements {{simpleName}} {
+  private static final String TOPIC_NAME = "{{topicName}}";
+  private static final int SCRATCH_BYTES = {{maxPayloadBytes}};
+
+  private final RingloomRuntime runtime;
+  private final TopicPublisher handle;
+  private final SerializerRegistry serializers;
+  private final TopicAckRegistry acks;
+  private final ThreadLocal<EncodeContext> encodeContexts = ThreadLocal.withInitial(EncodeContext::new);
+  private final ThreadLocal<long[]> outIndexHolder = ThreadLocal.withInitial(() -> new long[1]);
+  // Per-thread scratch buffer (one per publishing thread) reused across publishes.
+  private final ThreadLocal<MemorySegment> scratchSegments =
+      ThreadLocal.withInitial(() -> java.lang.foreign.Arena.ofConfined().allocate(SCRATCH_BYTES, 8));
+
+  public {{generatedName}}(
+      RingloomRuntime runtime,
+      io.ringloom.service.RingloomClient lowLevelClient,
+      SerializerRegistry serializers,
+      TopicPublisher handle,
+      TopicAckRegistry acks) {
+    this.runtime = Objects.requireNonNull(runtime, "runtime");
+    this.serializers = Objects.requireNonNull(serializers, "serializers");
+    this.handle = Objects.requireNonNull(handle, "handle");
+    this.acks = acks;
+  }
+
+  /** Returns the broker-assigned topic id resolved at registration time. */
+  public long topicId() {
+    return handle.topicId();
+  }
+
+  /**
+   * Claims a slice of the per-thread preallocated scratch buffer large enough for the encoded payload.
+   * Zero-allocation in steady state: the buffer is reused across publishes.
+   */
+  private MemorySegment claimScratch(int encodedLength) {
+    if (encodedLength < 0 || encodedLength > SCRATCH_BYTES) {
+      throw new IllegalArgumentException(
+          "encoded payload length " + encodedLength + " exceeds topic scratch capacity " + SCRATCH_BYTES);
+    }
+    return scratchSegments.get().asSlice(0, Math.max(1, encodedLength));
+  }
+{{{methodSources}}}
+}

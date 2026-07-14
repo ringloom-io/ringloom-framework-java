@@ -21,6 +21,10 @@ import io.ringloom.framework.config.TracingRuntimeConfig;
 import io.ringloom.framework.config.TracingSamplerKind;
 import io.ringloom.framework.config.VirtualThreadExecutionConfig;
 import io.ringloom.framework.config.WorkerBackpressurePolicy;
+import io.ringloom.framework.config.topic.TopicHandlerConfig;
+import io.ringloom.framework.config.topic.TopicPrefetcherConfig;
+import io.ringloom.framework.config.topic.TopicPublisherDefaults;
+import io.ringloom.framework.config.topic.TopicsRuntimeConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -47,7 +51,7 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         Map<String, Object> root = map(loaded, "root");
         requireKeys(root, "root", Set.of("ringloom"));
         Map<String, Object> ringloom = map(root.get("ringloom"), "ringloom");
-        requireKeys(ringloom, "ringloom", Set.of("service", "runtime", "serializers", "clients"));
+        requireKeys(ringloom, "ringloom", Set.of("service", "runtime", "serializers", "clients", "topics"));
         RingloomServiceRuntimeConfig service =
                 service(map(required(ringloom, "service", "ringloom.service"), "ringloom.service"));
         RingloomRuntimeConfig runtime = runtime(optionalMap(ringloom.get("runtime"), "ringloom.runtime"));
@@ -55,7 +59,78 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
                 serializers(optionalMap(ringloom.get("serializers"), "ringloom.serializers"));
         Map<String, RingloomClientRuntimeConfig> clients =
                 clients(optionalMap(ringloom.get("clients"), "ringloom.clients"));
-        return new RingloomApplicationConfig(service, runtime, serializers, clients);
+        TopicsRuntimeConfig topics = topics(optionalMap(ringloom.get("topics"), "ringloom.topics"));
+        return new RingloomApplicationConfig(service, runtime, serializers, clients, topics);
+    }
+
+    private static TopicsRuntimeConfig topics(Map<String, Object> values) {
+        if (values.isEmpty()) {
+            return TopicsRuntimeConfig.disabled();
+        }
+        requireKeys(
+                values,
+                "ringloom.topics",
+                Set.of("enabled", "coalesceWithMessages", "prefetcher", "publisherDefaults", "handlers"));
+        boolean enabled = bool(values.get("enabled"), false);
+        boolean coalesce = bool(values.get("coalesceWithMessages"), true);
+        TopicPrefetcherConfig prefetcher =
+                prefetcher(optionalMap(values.get("prefetcher"), "ringloom.topics.prefetcher"));
+        TopicPublisherDefaults defaults =
+                publisherDefaults(optionalMap(values.get("publisherDefaults"), "ringloom.topics.publisherDefaults"));
+        Map<String, TopicHandlerConfig> handlers =
+                topicHandlers(optionalMap(values.get("handlers"), "ringloom.topics.handlers"));
+        return new TopicsRuntimeConfig(enabled, coalesce, prefetcher, defaults, handlers);
+    }
+
+    private static TopicPrefetcherConfig prefetcher(Map<String, Object> values) {
+        if (values.isEmpty()) {
+            return TopicPrefetcherConfig.defaults();
+        }
+        requireKeys(values, "ringloom.topics.prefetcher", Set.of("cpuAffinity", "pollLimit", "intervalMicros"));
+        Integer cpuAffinity = optionalInteger(values.get("cpuAffinity"), "ringloom.topics.prefetcher.cpuAffinity");
+        int pollLimit = integer(values.get("pollLimit"), "ringloom.topics.prefetcher.pollLimit", 64);
+        long intervalMicros = longValue(values.get("intervalMicros"), "ringloom.topics.prefetcher.intervalMicros", 0L);
+        return new TopicPrefetcherConfig(cpuAffinity, pollLimit, intervalMicros);
+    }
+
+    private static TopicPublisherDefaults publisherDefaults(Map<String, Object> values) {
+        if (values.isEmpty()) {
+            return TopicPublisherDefaults.defaults();
+        }
+        requireKeys(values, "ringloom.topics.publisherDefaults", Set.of("rollScheme", "retentionCycles"));
+        String rollScheme = string(values.get("rollScheme"), "ringloom.topics.publisherDefaults.rollScheme");
+        if (rollScheme == null || rollScheme.isBlank()) {
+            rollScheme = "FAST_DAILY";
+        }
+        int retentionCycles =
+                integer(values.get("retentionCycles"), "ringloom.topics.publisherDefaults.retentionCycles", 0);
+        return new TopicPublisherDefaults(rollScheme, retentionCycles, 0);
+    }
+
+    private static Map<String, TopicHandlerConfig> topicHandlers(Map<String, Object> values) {
+        if (values.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, TopicHandlerConfig> handlers = new HashMap<>();
+        for (Map.Entry<String, Object> entry : values.entrySet()) {
+            String name = entry.getKey();
+            Map<String, Object> handlerMap = map(entry.getValue(), "ringloom.topics.handlers." + name);
+            requireKeys(
+                    handlerMap,
+                    "ringloom.topics.handlers." + name,
+                    Set.of("topic", "start", "serializer", "partitionKey"));
+            String topic = string(handlerMap.get("topic"), "ringloom.topics.handlers." + name + ".topic");
+            io.ringloom.service.TopicStart start = enumValue(
+                    io.ringloom.service.TopicStart.class,
+                    string(handlerMap.get("start"), ""),
+                    io.ringloom.service.TopicStart.EARLIEST);
+            String serializer =
+                    string(handlerMap.get("serializer"), "ringloom.topics.handlers." + name + ".serializer");
+            String partitionKey =
+                    string(handlerMap.get("partitionKey"), "ringloom.topics.handlers." + name + ".partitionKey");
+            handlers.put(name, new TopicHandlerConfig(topic, start, serializer, partitionKey));
+        }
+        return handlers;
     }
 
     private static RingloomServiceRuntimeConfig service(Map<String, Object> values) {

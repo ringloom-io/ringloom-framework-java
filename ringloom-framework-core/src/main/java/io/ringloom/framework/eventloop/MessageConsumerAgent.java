@@ -19,10 +19,11 @@ public final class MessageConsumerAgent implements Agent, MessageHandler {
     private final MessageExecutionPolicy executionPolicy;
     private final MessageContext context;
     private final int pollLimit;
+    private final Runnable topicPollHook;
 
     public MessageConsumerAgent(
             MessageConsumer consumer, MessageExecutionPolicy executionPolicy, RingloomRuntime runtime, int pollLimit) {
-        this("ringloom-message-consumer-agent", consumer, executionPolicy, runtime, pollLimit);
+        this("ringloom-message-consumer-agent", consumer, executionPolicy, runtime, pollLimit, null);
     }
 
     public MessageConsumerAgent(
@@ -31,6 +32,27 @@ public final class MessageConsumerAgent implements Agent, MessageHandler {
             MessageExecutionPolicy executionPolicy,
             RingloomRuntime runtime,
             int pollLimit) {
+        this(roleName, consumer, executionPolicy, runtime, pollLimit, null);
+    }
+
+    /**
+     * Constructs a message-consumer agent with an optional topic-poll hook invoked after each message
+     * batch (used for {@code topics.coalesceWithMessages}).
+     *
+     * @param roleName       the agent role name
+     * @param consumer       the native message consumer
+     * @param executionPolicy the execution policy
+     * @param runtime        the owning runtime
+     * @param pollLimit      the per-tick message poll limit
+     * @param topicPollHook  invoked after each {@code consumer.poll} batch, or {@code null}
+     */
+    public MessageConsumerAgent(
+            String roleName,
+            MessageConsumer consumer,
+            MessageExecutionPolicy executionPolicy,
+            RingloomRuntime runtime,
+            int pollLimit,
+            Runnable topicPollHook) {
         this.roleName = Objects.requireNonNullElse(roleName, "ringloom-message-consumer-agent");
         this.consumer = Objects.requireNonNull(consumer, "consumer");
         this.executionPolicy = Objects.requireNonNull(executionPolicy, "executionPolicy");
@@ -39,11 +61,16 @@ public final class MessageConsumerAgent implements Agent, MessageHandler {
             throw new IllegalArgumentException("pollLimit must be non-negative");
         }
         this.pollLimit = pollLimit;
+        this.topicPollHook = topicPollHook;
     }
 
     @Override
     public int doWork() {
-        return consumer.poll(this, pollLimit);
+        int messages = consumer.poll(this, pollLimit);
+        if (topicPollHook != null) {
+            topicPollHook.run();
+        }
+        return messages;
     }
 
     @Override

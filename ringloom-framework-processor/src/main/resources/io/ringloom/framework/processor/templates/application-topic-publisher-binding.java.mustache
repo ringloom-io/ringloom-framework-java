@@ -1,0 +1,32 @@
+        new GeneratedTopicPublisherBinding() {
+          @Override
+          public Class<?> publisherType() {
+            return {{{publisherType}}}.class;
+          }
+
+          @Override
+          public String topic() {
+            return "{{topicName}}";
+          }
+
+          @Override
+          public String client() {
+            return "{{clientAlias}}";
+          }
+
+          @Override
+          public io.ringloom.service.TopicConfig topicConfig() {
+            return new io.ringloom.service.TopicConfig("{{rollScheme}}", {{retentionCycles}}, 0);
+          }
+
+          @Override
+          public Object create(
+              RingloomRuntime runtime,
+              io.ringloom.service.RingloomClient lowLevelClient,
+              SerializerRegistry serializers,
+              io.ringloom.framework.topic.ack.TopicAckRegistry ackRegistry) {
+            io.ringloom.service.TopicPublisher handle =
+                runtime.topicRuntime().publisher("{{topicName}}");
+            return new {{{generatedPublisherName}}}(runtime, lowLevelClient, serializers, handle, ackRegistry);
+          }
+        }{{comma}}
