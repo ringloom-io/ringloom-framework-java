@@ -246,6 +246,12 @@ public final class TopicRuntime implements AutoCloseable {
     /**
      * Polls leader-epoch and replicated-count feedback from every registered publisher and drives the
      * matching ack registry. Runs on the framework control thread each tick.
+     *
+     * <p>Reads {@link TopicPublisher#replicatedCount()} (the monotonic count of this topic's
+     * publishes replicated to ≥1 replica, in the same namespace as the per-topic publish token) and
+     * feeds it to {@link TopicAckRegistry#advanceReplicatedCount}. The registry then prefix-completes
+     * every pending entry whose publish token is {@code <= replicatedCount}, mirroring the broker's
+     * own {@code replicated_count >= token} ack predicate.
      */
     public void pollAckFeedback() {
         if (closed.get() || publishersByTopicId.isEmpty()) {
@@ -258,9 +264,9 @@ public final class TopicRuntime implements AutoCloseable {
                 continue;
             }
             long epoch = publisher.leaderEpoch();
-            long hwm = publisher.replicatedCount();
+            long replicatedCount = publisher.replicatedCount();
             long knownEpoch = registry.knownEpoch();
-            registry.advanceHwm(epoch, hwm);
+            registry.advanceReplicatedCount(epoch, replicatedCount);
             if (epoch > knownEpoch && epoch > 0) {
                 registry.onLeaderChanged(epoch);
             }

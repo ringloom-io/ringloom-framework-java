@@ -987,7 +987,7 @@ services, and subscriber services. A Java service participates in exactly two of
 these — **producer** and **subscriber**:
 
 - A **producer** registers a publication, then publishes payloads to the topic
-  leader. It receives throttled high-water-mark ack feedback on the control plane
+  leader. It receives throttled replicated-count ack feedback on the control plane
   for `replicate_once` sends.
 - A **subscriber** receives a local queue directory from the broker and reads its
   local replica (or master, when co-located with the leader) **directly via a
@@ -1030,12 +1030,19 @@ these onto publisher re-targeting and ack completion.
    `runtime.subscribe(...)`; all subscriptions are compile-time known. This keeps
    the subscriber side symmetric with the generated publisher and avoids runtime
    subscription bookkeeping.
-6. **Acks are callback-only and high-water-mark-driven.** `replicate_once`
-   publishes register an `AckCallback` keyed by the assigned publish index. The
-   control loop advances `replicated_hwm` from `TopicAckFeedback` frames and
-   completes every pending callback whose index is `<= replicated_hwm`. There is
-   no per-message round trip and no blocking/future API; callers needing blocking
-   wrap the callback themselves on a virtual thread.
+6. **Acks are callback-only and replicated-count-driven.** `replicate_once`
+   publishes register an `AckCallback` keyed by the assigned **per-topic publish
+   token** (a per-topic monotonic counter the leader returns in `out_index`, not
+   the broker queue index — the queue index resets across cycle rollovers and is
+   not a stable client-comparable token). The control loop polls
+   `TopicPublisher.replicatedCount()` (the monotonic count of this topic's
+   publishes replicated to ≥1 replica, in the same namespace as the token) and
+   completes every pending callback whose token is `<= replicatedCount` —
+   mirroring the broker's own `replicated_count >= token` ack predicate. The
+   broker also tracks a queue-index `replicated_hwm` internally but exposes only
+   `replicatedCount()` to clients. There is no per-message round trip and no
+   blocking/future API; callers needing blocking wrap the callback themselves on
+   a virtual thread.
 7. **Topic code lives in the existing artifacts.** Low-level topic bindings go in
    `ringloom-java-bindings`; topic runtime, dispatch adapter, annotations,
    publisher/subscriber runtime, and ack registry go in `ringloom-framework-core`;
@@ -1112,8 +1119,9 @@ is started, and generated publisher/handler registration is skipped.
    `TopicSubscription` handle per topic) and record their topic id + handler.
 3. Own and start the maintenance/prefetcher thread.
 4. Provide `pollTopics()` to advance tailers and dispatch.
-5. Advance `replicated_hwm` per publisher from control-plane ack feedback and
-   complete pending `AckCallback`s.
+5. Poll each publisher's `replicatedCount()` / `leaderEpoch()` on the control
+   thread and complete pending `AckCallback`s via the per-publisher
+   `TopicAckRegistry`.
 6. Re-target publishers on `TopicLeaderChanged` (delegated to the native handle).
 
 Inbound topic message:
@@ -1144,12 +1152,14 @@ Outbound topic publish (fire_and_forget):
 Outbound topic publish (replicate_once):
 
 1. Generated proxy encodes the payload and publishes with `ack_mode =
-   replicate_once`, receiving the assigned `publish_index`.
+   replicate_once`, receiving the assigned **per-topic publish token** in
+   `out_index` (the native `next_token`, not the broker queue index).
 2. Before returning, the proxy registers the caller's `AckCallback` (and opaque
-   caller context) keyed by `publish_index` in the publisher's ack registry.
-3. The control loop, on each `TopicAckFeedback{replicated_hwm}` frame, completes
-   every pending callback with index `<= replicated_hwm`. Completion runs on the
-   control thread; callbacks must be short.
+   caller context) keyed by that token in the publisher's ack registry.
+3. The control loop polls `TopicPublisher.replicatedCount()` each tick and
+   completes every pending callback with token `<= replicatedCount` (mirroring
+   the broker's own `replicated_count >= token` predicate). Completion runs on
+   the control thread; callbacks must be short.
 
 ### Zero-allocation topic hot path
 
@@ -1187,7 +1197,8 @@ facade plus a small set of native counters (published in service metadata by the
 native runtime):
 
 1. Per-publisher: `topic.publishes.offered`, `topic.publishes.f&f`,
-   `topic.publishes.replicate_once`, `topic.ack.hwm`, `topic.ack.pending`.
+   `topic.publishes.replicate_once`, `topic.ack.replicated_count`,
+   `topic.ack.pending`.
 2. Per-subscription: `topic.poll.messages`, `topic.poll.idle`,
    `topic.lag.behind_leader` (from the tailer index vs broker HWM, when exposed).
 3. Prefetcher: `topic.maintenance.work_units`, `topic.maintenance.page_faults`.
@@ -1271,11 +1282,12 @@ Outbound topic publish (fire_and_forget):
 Outbound topic publish (replicate_once):
 
 1. Generated proxy encodes the payload and publishes with
-   `ack_mode = replicate_once`, receiving the assigned `publish_index`.
-2. Proxy registers the caller's `AckCallback` keyed by `publish_index` before
+   `ack_mode = replicate_once`, receiving the assigned **per-topic publish
+   token** in `out_index`.
+2. Proxy registers the caller's `AckCallback` keyed by that token before
    returning.
-3. The control loop advances `replicated_hwm` from `TopicAckFeedback` frames and
-   completes every pending callback with index `<= replicated_hwm`.
+3. The control loop polls `TopicPublisher.replicatedCount()` and completes every
+   pending callback with token `<= replicatedCount`.
 4. On leader change or shutdown, pending callbacks are completed with a status.
 
 ## Implementation phases

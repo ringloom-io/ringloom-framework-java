@@ -21,7 +21,7 @@ final class TopicAckRegistryTest {
     private final TopicAckRegistry registry = new TopicAckRegistry(8, UnavailableRingloomMetrics.INSTANCE, null);
 
     @Test
-    void advanceHwmCompletesAckedPrefix() {
+    void advanceReplicatedCountCompletesAckedPrefix() {
         List<Completion> sink = new ArrayList<>();
 
         assertThat(registry.register(10, 1L, RECORDING_CALLBACK, sink, 0L)).isTrue();
@@ -29,7 +29,7 @@ final class TopicAckRegistryTest {
         assertThat(registry.register(12, 1L, RECORDING_CALLBACK, sink, 0L)).isTrue();
         assertThat(registry.pendingCount()).isEqualTo(3);
 
-        registry.advanceHwm(1L, 11L);
+        registry.advanceReplicatedCount(1L, 11L);
 
         assertThat(sink)
                 .containsExactlyInAnyOrder(
@@ -38,11 +38,11 @@ final class TopicAckRegistryTest {
     }
 
     @Test
-    void advanceHwmIgnoresStaleEpochs() {
+    void advanceReplicatedCountIgnoresStaleEpochs() {
         List<Completion> sink = new ArrayList<>();
         registry.register(20, 2L, RECORDING_CALLBACK, sink, 0L);
 
-        registry.advanceHwm(1L, 30L);
+        registry.advanceReplicatedCount(1L, 30L);
 
         assertThat(sink).isEmpty();
         assertThat(registry.pendingCount()).isEqualTo(1);
@@ -102,7 +102,7 @@ final class TopicAckRegistryTest {
                 .as("pool exhausted at capacity")
                 .isFalse();
 
-        registry.advanceHwm(1L, 67L);
+        registry.advanceReplicatedCount(1L, 67L);
         // The 8 pooled entries are back in the free queue.
         assertThat(registry.register(68, 1L, RECORDING_CALLBACK, sink, 0L)).isTrue();
     }

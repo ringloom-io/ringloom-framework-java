@@ -13,20 +13,30 @@ import org.slf4j.Logger;
 /**
  * Per-publisher registry of pending {@code replicate_once} topic acknowledgements.
  *
- * <p>One instance is owned by each generated publisher proxy. Pending entries are keyed by primitive
- * {@code long} publish index; the registry completes entries as the framework's control thread polls
- * {@code TopicPublisher.replicatedCount()} (the replicated publish count / high-water mark) and
- * advances it via {@link #advanceHwm(long, long)}.
+ * <p>One instance is owned by each generated publisher proxy. Pending entries are keyed by the
+ * per-topic publish sequence token returned in {@code outIndexHolder[0]} on publish (the native
+ * {@code next_token}, a per-topic monotonic counter — NOT the broker queue index). The registry
+ * completes entries as the framework's control thread polls
+ * {@link io.ringloom.service.TopicPublisher#replicatedCount()} (the monotonic count of this topic's
+ * publishes replicated to ≥1 replica, in the same namespace as the publish token) and advances it via
+ * {@link #advanceReplicatedCount(long, long)}.
+ *
+ * <p><strong>Why {@code replicatedCount} and not a queue-index HWM:</strong> the broker's own ack
+ * predicate is {@code replicated_count >= token} (see {@code TopicPublisher.isAcked} and
+ * {@code TopicQueue.replicatedCount} in the native source). The broker queue index ("hwm") resets
+ * across cycle rollovers and cannot serve as a stable client-comparable token; only the per-topic
+ * {@code replicated_count} can. This registry therefore mirrors the broker's predicate exactly:
+ * prefix completion on {@code publishIndex <= replicatedCount}.
  *
  * <p>The implementation is allocation-free in steady state: {@link PendingAck} entries are pooled and
  * reused, mirroring {@link io.ringloom.framework.request.PooledRequestResponseRegistry}. Completion
- * callbacks run inline on the thread that drives {@code advanceHwm}/{@code sweepTimeouts} (the
- * framework control thread).
+ * callbacks run inline on the thread that drives {@code advanceReplicatedCount}/{@code sweepTimeouts}
+ * (the framework control thread).
  *
  * <p>All mutating methods are {@code synchronized}: the publish thread registers entries while the
- * control thread advances the HWM and sweeps timeouts. The critical sections are short (prefix
- * completion + pooled release) and callbacks run inside the lock to preserve the "inline on control
- * thread" contract; callbacks must not block.
+ * control thread advances the replicated count and sweeps timeouts. The critical sections are short
+ * (prefix completion + pooled release) and callbacks run inside the lock to preserve the "inline on
+ * control thread" contract; callbacks must not block.
  */
 public final class TopicAckRegistry {
     private final int maxPending;
@@ -38,11 +48,11 @@ public final class TopicAckRegistry {
     private final List<PendingAck> pending = new ArrayList<>();
 
     private long seenEpoch = 0L;
-    private long currentHwm = 0L;
+    private long currentReplicatedCount = 0L;
     private boolean shutdown = false;
 
     // Metrics handles (nullable: metrics may be unavailable).
-    private final RingloomGauge hwmGauge;
+    private final RingloomGauge replicatedCountGauge;
     private final RingloomGauge pendingGauge;
     private final RingloomCounter completedCounter;
     private final RingloomCounter timeoutCounter;
@@ -70,7 +80,7 @@ public final class TopicAckRegistry {
             slots[i] = entry;
             free.addLast(entry);
         }
-        this.hwmGauge = registerGauge(metrics, "topic.ack.hwm");
+        this.replicatedCountGauge = registerGauge(metrics, "topic.ack.replicated_count");
         this.pendingGauge = registerGauge(metrics, "topic.ack.pending");
         this.completedCounter = registerCounter(metrics, "topic.ack.completed");
         this.timeoutCounter = registerCounter(metrics, "topic.ack.timeout");
@@ -100,7 +110,7 @@ public final class TopicAckRegistry {
      * <p>Allocation-free in steady state: pooled entries are reused. Returns {@code false} (without
      * invoking the callback) when the pool is exhausted or the registry has been shut down.
      *
-     * @param publishIndex the publish index returned by the publish call
+     * @param publishIndex the per-topic publish sequence token returned by the publish call
      * @param leaderEpoch  the publisher's leader epoch at publish time
      * @param callback     the caller-reused completion callback
      * @param userContext  opaque caller context passed back in the callback
@@ -122,31 +132,33 @@ public final class TopicAckRegistry {
     }
 
     /**
-     * Advances the replicated high-water mark for the given epoch.
+     * Advances the replicated publish count for the given epoch.
      *
      * <p>Frames whose epoch is older than {@link #knownEpoch()} are ignored (stale feedback from a
      * previous leader). For a current/new epoch, every pending entry sent under the frame's epoch
-     * whose {@code publishIndex <= hwm} is completed as {@link AckStatus#ACKED}; entries sent under a
-     * different epoch are left for {@link #onLeaderChanged(long)}.
+     * whose {@code publishIndex <= replicatedCount} is completed as {@link AckStatus#ACKED}; entries
+     * sent under a different epoch are left for {@link #onLeaderChanged(long)}. This mirrors the
+     * broker's own {@code replicated_count >= token} ack predicate.
      *
-     * @param leaderEpoch the publisher's current leader epoch
-     * @param hwm         the replicated publish count reported by the publisher
+     * @param leaderEpoch      the publisher's current leader epoch
+     * @param replicatedCount  the replicated publish count reported by {@link
+     *                         io.ringloom.service.TopicPublisher#replicatedCount()}
      */
-    public synchronized void advanceHwm(long leaderEpoch, long hwm) {
+    public synchronized void advanceReplicatedCount(long leaderEpoch, long replicatedCount) {
         if (leaderEpoch < seenEpoch) {
             return;
         }
         if (leaderEpoch > seenEpoch) {
             seenEpoch = leaderEpoch;
         }
-        if (hwm <= currentHwm) {
+        if (replicatedCount <= currentReplicatedCount) {
             return;
         }
-        currentHwm = hwm;
-        if (hwmGauge != null) {
-            hwmGauge.set(hwm);
+        currentReplicatedCount = replicatedCount;
+        if (replicatedCountGauge != null) {
+            replicatedCountGauge.set(replicatedCount);
         }
-        completeAckedPrefix(leaderEpoch, hwm);
+        completeAckedPrefix(leaderEpoch, replicatedCount);
     }
 
     /**
@@ -202,9 +214,9 @@ public final class TopicAckRegistry {
         return seenEpoch;
     }
 
-    /** Returns the current replicated high-water mark. */
-    public synchronized long currentHwm() {
-        return currentHwm;
+    /** Returns the current replicated publish count. */
+    public synchronized long currentReplicatedCount() {
+        return currentReplicatedCount;
     }
 
     /** Returns the number of currently pending entries. */
@@ -217,10 +229,10 @@ public final class TopicAckRegistry {
         return maxPending;
     }
 
-    private void completeAckedPrefix(long leaderEpoch, long hwm) {
+    private void completeAckedPrefix(long leaderEpoch, long replicatedCount) {
         for (int i = pending.size() - 1; i >= 0; i--) {
             PendingAck entry = pending.get(i);
-            if (entry.leaderEpoch == leaderEpoch && entry.publishIndex <= hwm) {
+            if (entry.leaderEpoch == leaderEpoch && entry.publishIndex <= replicatedCount) {
                 pending.remove(i);
                 complete(entry, AckStatus.ACKED);
             }

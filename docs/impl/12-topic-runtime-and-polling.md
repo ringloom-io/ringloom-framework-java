@@ -4,8 +4,8 @@
 
 Add the `TopicRuntime` sub-component that owns topic publishers and
 subscriptions, drives subscriber polling, runs the maintenance/prefetcher thread,
-and advances ack high-water-marks. This phase wires the low-level topic bindings
-(see the cross-repo spec
+and polls replicated-count feedback for the ack registry. This phase wires the
+low-level topic bindings (see the cross-repo spec
 [`docs/topics/12-java-topic-bindings.md`](https://github.com/ringloom-io/ringloom/blob/main/docs/topics/12-java-topic-bindings.md))
 into the framework lifecycle and provides the `pollTopics()` entry point that
 later phases (dispatch, publishers, annotations) build on.
@@ -18,7 +18,7 @@ Those phases plug into the hooks defined here.
 
 1. `TopicsRuntimeConfig` and related config records.
 2. `TopicRuntime` owning publishers, subscriptions, the prefetcher thread, and
-   ack HWM advancement.
+   the control-thread ack-feedback poll.
 3. `RingloomRuntime` integration: start/stop, `pollTopics()`, and coalescing the
    topic poll into the message event loop.
 4. YAML configuration for topics.
@@ -161,11 +161,13 @@ public final class TopicRuntime implements AutoCloseable {
     /** Round-robin maintenance poll across all subscriptions (prefetcher thread body). */
     void runMaintenance();
 
-    /** Called by the control path on ack feedback (phase 15 wires the registry). */
-    void onAckFeedback(long topicId, long leaderEpoch, long replicatedHwm);
-
-    /** Called by the control path on leader change (phase 15 wires publishers). */
-    void onTopicLeaderChanged(long topicId, short leaderNode, long leaderEpoch);
+    /**
+     * Polls each publisher's replicated-count and leader-epoch accessors and drives
+     * the matching ack registries. Called by the framework control thread each tick.
+     * Phase 15 wires the registries; this method reads the binding accessors
+     * (TopicPublisher.replicatedCount() / leaderEpoch()) and feeds the registry.
+     */
+    void pollAckFeedback();
 
     @Override public void close();
 }
