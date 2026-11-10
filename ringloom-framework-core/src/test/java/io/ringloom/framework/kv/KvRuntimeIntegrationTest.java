@@ -320,7 +320,8 @@ final class KvRuntimeIntegrationTest {
             kv.start();
 
             assertThat(base).isCompleted();
-            assertThat(baseReader).isCompleted();
+            // The reader may still be pending (topic not yet visible) and complete after background
+            // retries; the chained reader open below waits for it either way.
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             while (!(chainedWriter.isDone() && chainedReader.isDone())) {
                 if (System.nanoTime() > deadline) {

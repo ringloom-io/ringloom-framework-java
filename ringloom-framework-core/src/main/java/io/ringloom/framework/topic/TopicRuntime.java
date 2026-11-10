@@ -175,7 +175,7 @@ public final class TopicRuntime implements AutoCloseable {
     /**
      * Advances every subscription and dispatches received messages through the wired source.
      *
-     * <p>Zero per-poll allocation in steady state: the {@link TopicPollResult} and the
+     * <p>Zero per-poll allocation in steady state: the {@link io.ringloom.service.TopicPollResult} and the
      * {@link TopicMessage}/{@link TopicContext} carried by the source are reused. Returns the number
      * of messages dispatched.
      *

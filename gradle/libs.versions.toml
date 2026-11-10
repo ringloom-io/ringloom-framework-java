@@ -9,6 +9,7 @@ opentelemetry = "1.56.0"
 snakeYamlEngine = "2.9"
 assertj = "3.27.7"
 junit = "6.0.3"
+mavenPublish = "0.36.0"
 mockito = "5.23.0"
 palantirJavaFormat = "2.90.0"
 slf4j = "2.0.17"
@@ -42,4 +43,5 @@ sbeTool = { group = "uk.co.real-logic", name = "sbe-tool", version.ref = "sbe" }
 testLibs = ["junitJupiter", "assertj", "mockitoCore"]
 
 [plugins]
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
