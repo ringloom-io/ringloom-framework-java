@@ -21,6 +21,11 @@ import io.ringloom.framework.config.TracingRuntimeConfig;
 import io.ringloom.framework.config.TracingSamplerKind;
 import io.ringloom.framework.config.VirtualThreadExecutionConfig;
 import io.ringloom.framework.config.WorkerBackpressurePolicy;
+import io.ringloom.framework.config.kv.KvAcquireMode;
+import io.ringloom.framework.config.kv.KvRuntimeConfig;
+import io.ringloom.framework.config.kv.KvStoreConfigOverride;
+import io.ringloom.framework.config.kv.KvStoreRuntimeConfig;
+import io.ringloom.framework.config.kv.KvTtlClock;
 import io.ringloom.framework.config.topic.TopicHandlerConfig;
 import io.ringloom.framework.config.topic.TopicPrefetcherConfig;
 import io.ringloom.framework.config.topic.TopicPublisherDefaults;
@@ -51,7 +56,7 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         Map<String, Object> root = map(loaded, "root");
         requireKeys(root, "root", Set.of("ringloom"));
         Map<String, Object> ringloom = map(root.get("ringloom"), "ringloom");
-        requireKeys(ringloom, "ringloom", Set.of("service", "runtime", "serializers", "clients", "topics"));
+        requireKeys(ringloom, "ringloom", Set.of("service", "runtime", "serializers", "clients", "topics", "kv"));
         RingloomServiceRuntimeConfig service =
                 service(map(required(ringloom, "service", "ringloom.service"), "ringloom.service"));
         RingloomRuntimeConfig runtime = runtime(optionalMap(ringloom.get("runtime"), "ringloom.runtime"));
@@ -60,7 +65,152 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         Map<String, RingloomClientRuntimeConfig> clients =
                 clients(optionalMap(ringloom.get("clients"), "ringloom.clients"));
         TopicsRuntimeConfig topics = topics(optionalMap(ringloom.get("topics"), "ringloom.topics"));
-        return new RingloomApplicationConfig(service, runtime, serializers, clients, topics);
+        KvRuntimeConfig kv = kv(optionalMap(ringloom.get("kv"), "ringloom.kv"));
+        return new RingloomApplicationConfig(service, runtime, serializers, clients, topics, kv);
+    }
+
+    /**
+     * Parses {@code ringloom.kv}. Store names that no generated {@code @RingloomKvStore} declares
+     * must set {@code reader: true} or {@code writer: true}; the loader cannot see generated bindings,
+     * so that rule is enforced when the KV runtime starts ("unknown kv store").
+     */
+    private static KvRuntimeConfig kv(Map<String, Object> values) {
+        if (values.isEmpty()) {
+            return KvRuntimeConfig.disabled();
+        }
+        String path = "ringloom.kv";
+        requireKeys(
+                values,
+                path,
+                Set.of("enabled", "statusIntervalMillis", "openRetryMillis", "closeTimeoutMillis", "stores"));
+        boolean enabled = bool(values.get("enabled"), path + ".enabled", false);
+        long statusInterval = longValue(
+                values.get("statusIntervalMillis"),
+                path + ".statusIntervalMillis",
+                KvRuntimeConfig.DEFAULT_STATUS_INTERVAL_MILLIS);
+        long openRetry = longValue(
+                values.get("openRetryMillis"), path + ".openRetryMillis", KvRuntimeConfig.DEFAULT_OPEN_RETRY_MILLIS);
+        long closeTimeout = longValue(
+                values.get("closeTimeoutMillis"),
+                path + ".closeTimeoutMillis",
+                KvRuntimeConfig.DEFAULT_CLOSE_TIMEOUT_MILLIS);
+        Map<String, KvStoreRuntimeConfig> stores = new HashMap<>();
+        for (Map.Entry<String, Object> entry :
+                optionalMap(values.get("stores"), path + ".stores").entrySet()) {
+            String storePath = path + ".stores." + entry.getKey();
+            stores.put(entry.getKey(), kvStore(optionalMap(entry.getValue(), storePath), storePath));
+        }
+        try {
+            return new KvRuntimeConfig(enabled, statusInterval, openRetry, closeTimeout, stores);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("ringloom." + ex.getMessage(), ex);
+        }
+    }
+
+    private static KvStoreRuntimeConfig kvStore(Map<String, Object> values, String path) {
+        requireKeys(
+                values,
+                path,
+                Set.of(
+                        "reader",
+                        "writer",
+                        "required",
+                        "waitReadyTimeoutMillis",
+                        "prefault",
+                        "ttlClock",
+                        "maxThreadSessions",
+                        "sessionPoolSize",
+                        "acquire",
+                        "openTimeoutMillis",
+                        "maxFrameLength",
+                        "maxPendingAcks",
+                        "ackTimeoutMillis",
+                        "config"));
+        try {
+            return new KvStoreRuntimeConfig(
+                    bool(values.get("reader"), path + ".reader", false),
+                    bool(values.get("writer"), path + ".writer", false),
+                    bool(values.get("required"), path + ".required", false),
+                    longValue(
+                            values.get("waitReadyTimeoutMillis"),
+                            path + ".waitReadyTimeoutMillis",
+                            KvStoreRuntimeConfig.DEFAULT_WAIT_READY_TIMEOUT_MILLIS),
+                    bool(values.get("prefault"), path + ".prefault", false),
+                    ttlClock(string(values.get("ttlClock"), path + ".ttlClock"), path + ".ttlClock"),
+                    integer(
+                            values.get("maxThreadSessions"),
+                            path + ".maxThreadSessions",
+                            KvStoreRuntimeConfig.DEFAULT_MAX_THREAD_SESSIONS),
+                    integer(
+                            values.get("sessionPoolSize"),
+                            path + ".sessionPoolSize",
+                            KvStoreRuntimeConfig.defaultSessionPoolSize()),
+                    acquireMode(string(values.get("acquire"), path + ".acquire"), path + ".acquire"),
+                    longValue(
+                            values.get("openTimeoutMillis"),
+                            path + ".openTimeoutMillis",
+                            KvStoreRuntimeConfig.DEFAULT_OPEN_TIMEOUT_MILLIS),
+                    longValue(values.get("maxFrameLength"), path + ".maxFrameLength", 0L),
+                    integer(
+                            values.get("maxPendingAcks"),
+                            path + ".maxPendingAcks",
+                            KvStoreRuntimeConfig.DEFAULT_MAX_PENDING_ACKS),
+                    longValue(values.get("ackTimeoutMillis"), path + ".ackTimeoutMillis", 0L),
+                    kvStoreConfig(optionalMap(values.get("config"), path + ".config"), path + ".config"));
+        } catch (IllegalArgumentException ex) {
+            if (ex.getMessage() != null && ex.getMessage().contains(path)) {
+                throw ex;
+            }
+            throw new IllegalArgumentException(path + ": " + ex.getMessage(), ex);
+        }
+    }
+
+    private static KvStoreConfigOverride kvStoreConfig(Map<String, Object> values, String path) {
+        if (values.isEmpty()) {
+            return KvStoreConfigOverride.none();
+        }
+        requireKeys(
+                values,
+                path,
+                Set.of("maxKeyLength", "maxValueLength", "defaultTtlMillis", "mapSizeHint", "rollScheme"));
+        String rollScheme = string(values.get("rollScheme"), path + ".rollScheme");
+        return new KvStoreConfigOverride(
+                integer(values.get("maxKeyLength"), path + ".maxKeyLength", -1),
+                nonNegativeLong(values.get("maxValueLength"), path + ".maxValueLength"),
+                nonNegativeLong(values.get("defaultTtlMillis"), path + ".defaultTtlMillis"),
+                nonNegativeLong(values.get("mapSizeHint"), path + ".mapSizeHint"),
+                rollScheme == null ? "" : rollScheme);
+    }
+
+    /** Reads an optional non-negative long where {@code -1} is the record's "not set" marker. */
+    private static long nonNegativeLong(Object value, String path) {
+        long result = longValue(value, path, -1L);
+        if (value != null && result < 0) {
+            throw new IllegalArgumentException(path + " must be >= 0");
+        }
+        return result;
+    }
+
+    private static KvTtlClock ttlClock(String value, String path) {
+        if (value == null) {
+            return KvTtlClock.PRECISE;
+        }
+        return switch (value) {
+            case "precise" -> KvTtlClock.PRECISE;
+            case "coarse" -> KvTtlClock.COARSE;
+            default -> throw new IllegalArgumentException("unknown " + path + " " + value + " (precise | coarse)");
+        };
+    }
+
+    private static KvAcquireMode acquireMode(String value, String path) {
+        if (value == null) {
+            return KvAcquireMode.FAIL_IF_HELD;
+        }
+        return switch (value) {
+            case "failIfHeld" -> KvAcquireMode.FAIL_IF_HELD;
+            case "wait" -> KvAcquireMode.WAIT;
+            default -> throw new IllegalArgumentException("unknown " + path + " " + value + " (failIfHeld | wait)");
+        };
     }
 
     private static TopicsRuntimeConfig topics(Map<String, Object> values) {
@@ -372,6 +522,16 @@ public final class YamlRingloomConfigLoader implements RingloomConfigLoader {
         }
         if (!(value instanceof Boolean bool)) {
             throw new IllegalArgumentException("value must be boolean");
+        }
+        return bool;
+    }
+
+    private static boolean bool(Object value, String path, boolean defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (!(value instanceof Boolean bool)) {
+            throw new IllegalArgumentException(path + " must be a boolean");
         }
         return bool;
     }

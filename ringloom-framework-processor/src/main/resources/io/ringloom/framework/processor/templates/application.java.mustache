@@ -3,11 +3,13 @@
 {{/packageName}}import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.generated.GeneratedClientBinding;
+import io.ringloom.framework.generated.GeneratedKvStoreBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.generated.GeneratedTopicDispatcher;
 import io.ringloom.framework.generated.GeneratedTopicHandlerBinding;
 import io.ringloom.framework.generated.GeneratedTopicPublisherBinding;
+import io.ringloom.framework.kv.KvWriterStateEvent;
 import io.ringloom.framework.serialization.DecodeContext;
 import io.ringloom.framework.serialization.FlyweightDecoder;
 import io.ringloom.framework.serialization.MessageDecoder;
@@ -116,6 +118,27 @@ public final class {{appName}} implements GeneratedRingloomApplication {
     generatedTopicDispatcher().initializeTopicIds(resolvedTopicIds);
   }
 {{/hasTopicDispatcher}}
+{{#hasKvStores}}
+  @Override
+  public List<GeneratedKvStoreBinding> kvStores() {
+    return List.of(
+{{{kvStoreBindingSources}}}    );
+  }
+{{/hasKvStores}}
+{{#hasKvWriterStateHandlers}}
+  @Override
+  public void dispatchKvWriterState(KvWriterStateEvent event) {
+    RuntimeException failure = null;
+    switch (event.store()) {
+{{{kvWriterStateCases}}}      default -> {
+        // No handlers for this store.
+      }
+    }
+    if (failure != null) {
+      throw failure;
+    }
+  }
+{{/hasKvWriterStateHandlers}}
 
   private <T> T component(Class<T> type) {
     return type.cast(generatedComponents().get(type));

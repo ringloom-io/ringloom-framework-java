@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: price-reader
+    storagePath: /tmp/ringloom-framework-market-data-kv/storage
+    group: market-data-java-kv
+  runtime:
+    messages:
+      execution:
+        mode: consumerThread
+  serializers:
+    default: sbe
+  kv:
+    enabled: true
+    openRetryMillis: 1000
+    stores:
+      prices:
+        # Do not block startup: reads return null (NOT_READY) until a writer has published.
+        required: false

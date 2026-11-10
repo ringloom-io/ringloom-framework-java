@@ -10,4 +10,10 @@ public final class MemorySegmentMutableDirectBuffer extends MemorySegmentDirectB
         super.wrap(segment);
         return this;
     }
+
+    @Override
+    public MemorySegmentMutableDirectBuffer wrap(java.lang.foreign.MemorySegment segment, long length) {
+        super.wrap(segment, length);
+        return this;
+    }
 }

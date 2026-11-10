@@ -25,11 +25,30 @@ public class MemorySegmentDirectBuffer extends UnsafeBuffer {
      * @return this reusable adapter
      */
     public MemorySegmentDirectBuffer wrap(MemorySegment segment) {
-        this.segment = Objects.requireNonNull(segment, "segment");
+        Objects.requireNonNull(segment, "segment");
+        return wrap(segment, segment.byteSize());
+    }
+
+    /**
+     * Wraps the first {@code length} bytes of a native memory segment without copying or slicing.
+     * Agrona bounds checks then reject access past {@code length}.
+     *
+     * @param segment the native segment to expose as an Agrona buffer; may be larger than
+     *     {@code length}
+     * @param length the number of bytes to expose, in {@code [0, segment.byteSize()]}
+     * @return this reusable adapter
+     */
+    public MemorySegmentDirectBuffer wrap(MemorySegment segment, long length) {
+        Objects.requireNonNull(segment, "segment");
         if (!segment.isNative()) {
             throw new IllegalArgumentException("SBE MemorySegment buffers require native memory");
         }
-        super.wrap(segment.address(), Math.toIntExact(segment.byteSize()));
+        if (length < 0 || length > segment.byteSize()) {
+            throw new IndexOutOfBoundsException(
+                    "length " + length + " outside segment of " + segment.byteSize() + " bytes");
+        }
+        this.segment = segment;
+        super.wrap(segment.address(), Math.toIntExact(length));
         return this;
     }
 

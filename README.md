@@ -23,6 +23,9 @@ as a Gradle multi-project build.
 - Request/response registry with callback-oriented and virtual-thread-friendly
   correlation support.
 - Pluggable serializer SPI with optional SBE and Apache Fory modules.
+- Replicated key-value stores: generated `@RingloomKvStore` proxies over local
+  shared-memory reads, a fenced single-writer lease with standby takeover, and
+  `replicate_once` acks.
 - Strict YAML configuration loader.
 - Metrics and tracing extension points.
 - Avaje Inject module that exposes RingLoom runtime components as injectable
@@ -139,6 +142,43 @@ Use `ringloom-serializer-sbe` for SBE/Agrona codec integration and
 `ringloom-serializer-fory` for Apache Fory-backed POJO serialization. Serializer
 modules are optional and are not pulled into core by default.
 
+## Replicated KV stores
+
+KV stores need a broker with `broker.topics.enabled=true` and
+`broker.kv.enabled=true`, and `ringloom.kv.enabled: true` in the service YAML.
+Declare a store as an interface. The annotation processor generates the proxy.
+`long`, `int` and `String` keys are encoded inline without allocation, and values
+go through the named serializer:
+
+```java
+@RingloomKvStore(name = "prices", serializer = "sbe", maxKeyLength = 8, maxValueLength = 64)
+public interface PriceStoreWriter extends KvWriterOperations {
+    @RingloomKvPut
+    int put(long instrumentId, PriceSnapshotDto snapshot);
+}
+
+@RingloomKvStore(name = "prices", serializer = "sbe")
+public interface PriceStore extends KvReaderOperations {
+    /** Local shared-memory read; the flyweight is valid until the next KV read on this thread. */
+    @RingloomKvGet
+    PriceSnapshotDecoder get(long instrumentId);
+}
+```
+
+```yaml
+ringloom:
+  kv:
+    enabled: true
+    stores:
+      prices:
+        acquire: wait      # queue as a standby writer instead of failing startup
+```
+
+Obtain proxies with `runtime.generatedClient(PriceStore.class)` or by Avaje
+injection. Use `runtime.kv()` for the raw `MemorySegment` API, and
+`@RingloomKvWriterStateHandler` to react to lease changes. See
+`samples/market-data-kv` and `docs/impl/16-kv-stores.md`.
+
 ## Avaje Inject integration
 
 `ringloom-ioc-avaje` provides `RingloomAvajeModule`, an Avaje custom module that
@@ -167,7 +207,8 @@ Design and implementation notes live under `docs/`:
 - `docs/architecture.md` describes the framework architecture.
 - `docs/impl/` contains phase documents for the framework skeleton, annotation
   processor, YAML bootstrap, serializers, metrics, execution modes, tracing,
-  Avaje IoC, and request/response support.
+  Avaje IoC, request/response support, persistent topics, and replicated KV
+  stores (`16-kv-stores.md`).
 
 ## Development
 

@@ -1,0 +1,315 @@
+package test;
+
+import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.kv.KvGeneratedSupport;
+import io.ringloom.framework.kv.KvReaderStore;
+import io.ringloom.framework.kv.KvRuntime;
+import io.ringloom.framework.kv.KvStoreStatus;
+import io.ringloom.framework.kv.KvThreadState;
+import io.ringloom.framework.kv.KvWriterState;
+import io.ringloom.framework.kv.KvWriterStore;
+import io.ringloom.framework.kv.codec.KvKeyCodecs;
+import io.ringloom.framework.serialization.FlyweightDecoder;
+import io.ringloom.framework.serialization.MessageDecoder;
+import io.ringloom.framework.serialization.MessageEncoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.framework.topic.ack.AckCallback;
+import io.ringloom.service.RingloomStatus;
+import java.lang.foreign.MemorySegment;
+import java.util.Objects;
+
+/**
+ * Generated {@code @RingloomKvStore} proxy for {@link test.PriceStore}. Codecs are resolved once in the
+ * constructor; built-in keys are encoded inline into the calling thread's KV scratch. A flyweight
+ * returned from a {@code get} is valid until the next KV read of any store on the same thread.
+ */
+public final class PriceStore_RingloomKvStore implements test.PriceStore {
+  private static final String STORE = "prices";
+  private static final int MAX_KEY_LENGTH = 8;
+
+  private final KvRuntime kv;
+  private final KvReaderStore reader;
+  private final KvWriterStore writer;
+  private final FlyweightDecoder<test.OrderDecoder> c0Flyweight;
+  private final MessageDecoder<test.OrderDecoder> c0Decoder;
+  private final FlyweightDecoder<test.OrderDecoder> c1Flyweight;
+  private final MessageDecoder<test.OrderDecoder> c1Decoder;
+  private final FlyweightDecoder<test.OrderDto> c2Flyweight;
+  private final MessageDecoder<test.OrderDto> c2Decoder;
+  private final FlyweightDecoder<test.OrderDecoder> c5Flyweight;
+  private final MessageDecoder<test.OrderDecoder> c5Decoder;
+  private final MessageEncoder<test.OrderDto> c7Encoder;
+  private final MessageEncoder<test.OrderDto> c9Encoder;
+  private final MessageEncoder<test.OrderDto> c10Encoder;
+  private final MessageEncoder<test.OrderDto> c11Encoder;
+  private final MessageEncoder<test.OrderDto> c12Encoder;
+
+  public PriceStore_RingloomKvStore(RingloomRuntime runtime, SerializerRegistry serializers) {
+    Objects.requireNonNull(runtime, "runtime");
+    Objects.requireNonNull(serializers, "serializers");
+    this.kv = runtime.kv();
+    this.reader = kv.reader(STORE);
+    this.writer = kv.writer(STORE);
+    this.c0Flyweight = KvGeneratedSupport.flyweight(serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class);
+    this.c0Decoder = KvGeneratedSupport.requireDecoder(
+        serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class, this.c0Flyweight, STORE);
+    this.c1Flyweight = KvGeneratedSupport.flyweight(serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class);
+    this.c1Decoder = KvGeneratedSupport.requireDecoder(
+        serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class, this.c1Flyweight, STORE);
+    this.c2Flyweight = KvGeneratedSupport.flyweight(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class);
+    this.c2Decoder = KvGeneratedSupport.requireDecoder(
+        serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, this.c2Flyweight, STORE);
+    this.c5Flyweight = KvGeneratedSupport.flyweight(serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class);
+    this.c5Decoder = KvGeneratedSupport.requireDecoder(
+        serializers, runtime.resolveSerializerName("sbe"), test.OrderDecoder.class, this.c5Flyweight, STORE);
+    this.c7Encoder = KvGeneratedSupport.requireEncoder(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, STORE);
+    this.c9Encoder = KvGeneratedSupport.requireEncoder(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, STORE);
+    this.c10Encoder = KvGeneratedSupport.requireEncoder(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, STORE);
+    this.c11Encoder = KvGeneratedSupport.requireEncoder(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, STORE);
+    this.c12Encoder = KvGeneratedSupport.requireEncoder(serializers, runtime.resolveSerializerName("sbe"), test.OrderDto.class, STORE);
+  }
+
+  public String storeName() {
+    return STORE;
+  }
+
+  @Override
+  public boolean isReady() {
+    return reader.isReady();
+  }
+
+  @Override
+  public KvStoreStatus status() {
+    return kv.status(STORE);
+  }
+
+  @Override
+  public KvWriterState writerState() {
+    return writer.state();
+  }
+
+  @Override
+  public long writerEpoch() {
+    return writer.writerEpoch();
+  }
+
+  @Override
+  public int beginBatch() {
+    return writer.beginBatch();
+  }
+
+  @Override
+  public int commitBatch() {
+    return writer.commitBatch();
+  }
+
+  @Override
+  public int commitBatchAck(AckCallback callback, Object context) {
+    return writer.commitBatchAck(callback, context);
+  }
+
+  @Override
+  public void abandonBatch() {
+    writer.abandonBatch();
+  }
+
+  @Override
+  public test.OrderDecoder get(long id) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $status = KvGeneratedSupport.read(this.reader, $state, $keySegment, $keyLength);
+    if ($status != RingloomStatus.OK) {
+      return null;
+    }
+    try {
+      return KvGeneratedSupport.decode(
+          this.c0Flyweight, this.c0Decoder, $state, $state.valueScratch(), $state.outLength()[0]);
+    } catch (RuntimeException $ex) {
+      this.kv.recordDecodeError(this.reader, $ex);
+      return null;
+    }
+  }
+
+  @Override
+  public int get(long id, io.ringloom.framework.kv.KvValue<test.OrderDecoder> out) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $status = KvGeneratedSupport.read(this.reader, $state, $keySegment, $keyLength);
+    if ($status != RingloomStatus.OK) {
+      out.fail($status);
+      return $status;
+    }
+    long $length = $state.outLength()[0];
+    try {
+      out.ok(
+          KvGeneratedSupport.decode(this.c1Flyweight, this.c1Decoder, $state, $state.valueScratch(), $length),
+          (int) $length);
+      return RingloomStatus.OK;
+    } catch (RuntimeException $ex) {
+      this.kv.recordDecodeError(this.reader, $ex);
+      out.fail(RingloomHandlerStatus.SERIALIZATION_ERROR);
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+  }
+
+  @Override
+  public test.OrderDto getDto(long id) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $status = KvGeneratedSupport.read(this.reader, $state, $keySegment, $keyLength);
+    if ($status != RingloomStatus.OK) {
+      return null;
+    }
+    try {
+      return KvGeneratedSupport.decode(
+          this.c2Flyweight, this.c2Decoder, $state, $state.valueScratch(), $state.outLength()[0]);
+    } catch (RuntimeException $ex) {
+      this.kv.recordDecodeError(this.reader, $ex);
+      return null;
+    }
+  }
+
+  @Override
+  public int getRaw(long id, java.lang.foreign.MemorySegment destination, long[] outLength) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    return this.reader.get($keySegment, 0L, $keyLength, destination, 0L, destination.byteSize(), outLength);
+  }
+
+  @Override
+  public boolean contains(long id) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    return this.reader.contains($keySegment, 0L, $keyLength) == RingloomStatus.OK;
+  }
+
+  @Override
+  public int forEach(io.ringloom.framework.kv.KvEntryVisitor<test.OrderDecoder> visitor) {
+    return KvGeneratedSupport.forEach(
+        this.kv, this.reader, this.kv.threadState(), this.c5Flyweight, this.c5Decoder, visitor);
+  }
+
+  @Override
+  public int forEachRaw(io.ringloom.service.KvRawVisitor visitor) {
+    return this.reader.forEachRaw(visitor);
+  }
+
+  @Override
+  public int put(long id, test.OrderDto order) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $valueLength = KvGeneratedSupport.encodeValue(this.c7Encoder, order, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.put($keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, -1L);
+  }
+
+  @Override
+  public int putRaw(long id, java.lang.foreign.MemorySegment order) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    return this.writer.put($keySegment, 0L, $keyLength, order, 0L, order.byteSize(), -1L);
+  }
+
+  @Override
+  public int putForever(long id, test.OrderDto order) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $valueLength = KvGeneratedSupport.encodeValue(this.c9Encoder, order, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.put($keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, 0L);
+  }
+
+  @Override
+  public int putExpiring(long id, test.OrderDto order, long ttlMillis) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $valueLength = KvGeneratedSupport.encodeValue(this.c10Encoder, order, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.put($keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, ttlMillis);
+  }
+
+  @Override
+  public int putAcked(long id, test.OrderDto order, io.ringloom.framework.topic.ack.AckCallback callback, java.lang.Object context) {
+    Objects.requireNonNull(callback, "callback");
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $valueLength = KvGeneratedSupport.encodeValue(this.c11Encoder, order, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.putAck(
+        $keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, -1L, callback, context);
+  }
+
+  @Override
+  public int putExpiringAcked(long id, test.OrderDto order, long ttlMillis, io.ringloom.framework.topic.ack.AckCallback callback, java.lang.Object context) {
+    Objects.requireNonNull(callback, "callback");
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    int $valueLength = KvGeneratedSupport.encodeValue(this.c12Encoder, order, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.putAck(
+        $keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, ttlMillis, callback, context);
+  }
+
+  @Override
+  public int delete(long id) {
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    return this.writer.delete($keySegment, 0L, $keyLength);
+  }
+
+  @Override
+  public int deleteAcked(long id, io.ringloom.framework.topic.ack.AckCallback callback, java.lang.Object context) {
+    Objects.requireNonNull(callback, "callback");
+    KvThreadState $state = this.kv.threadState();
+    MemorySegment $keySegment = $state.keyScratch();
+    $keySegment.set(KvGeneratedSupport.BE_LONG, 0L, id ^ Long.MIN_VALUE);
+    long $keyLength = 8L;
+    return this.writer.deleteAck($keySegment, 0L, $keyLength, callback, context);
+  }
+
+  @Override
+  public int clear() {
+    return this.writer.clear();
+  }
+
+  @Override
+  public int clearAcked(io.ringloom.framework.topic.ack.AckCallback callback, java.lang.Object context) {
+    Objects.requireNonNull(callback, "callback");
+    return this.writer.clearAck(callback, context);
+  }
+}

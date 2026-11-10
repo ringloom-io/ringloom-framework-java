@@ -1,0 +1,7 @@
+
+  @Override
+  public int {{methodName}}({{{parameters}}}) {
+{{#ack}}    Objects.requireNonNull({{callbackName}}, "callback");
+{{/ack}}{{{keySource}}}{{#ack}}    return this.writer.deleteAck($keySegment, 0L, $keyLength, {{callbackName}}, {{contextName}});
+{{/ack}}{{^ack}}    return this.writer.delete($keySegment, 0L, $keyLength);
+{{/ack}}  }

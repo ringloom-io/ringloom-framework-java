@@ -1,0 +1,6 @@
+
+  @Override
+  public int {{methodName}}({{{parameters}}}) {
+    return KvGeneratedSupport.forEach(
+        this.kv, this.reader, this.kv.threadState(), this.{{codec}}Flyweight, this.{{codec}}Decoder, {{valueName}});
+  }

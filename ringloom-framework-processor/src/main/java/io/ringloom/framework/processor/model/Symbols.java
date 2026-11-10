@@ -18,5 +18,13 @@ public final class Symbols {
     public static final String ACK_CALLBACK = "io.ringloom.framework.topic.ack.AckCallback";
     public static final String TOPIC_ACK_MODE = "io.ringloom.service.TopicAckMode";
 
+    // KV store symbols.
+    public static final String KV_VALUE = "io.ringloom.framework.kv.KvValue";
+    public static final String KV_ENTRY_VISITOR = "io.ringloom.framework.kv.KvEntryVisitor";
+    public static final String KV_RAW_VISITOR = "io.ringloom.service.KvRawVisitor";
+    public static final String KV_READER_OPERATIONS = "io.ringloom.framework.kv.KvReaderOperations";
+    public static final String KV_WRITER_OPERATIONS = "io.ringloom.framework.kv.KvWriterOperations";
+    public static final String KV_WRITER_STATE_EVENT = "io.ringloom.framework.kv.KvWriterStateEvent";
+
     private Symbols() {}
 }

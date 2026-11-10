@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: price-terminal
+    storagePath: /tmp/ringloom-framework-market-data-kv/storage
+    group: market-data-java-kv
+  runtime:
+    requests:
+      maxPending: 1024
+      defaultTimeoutMillis: 2000
+  serializers:
+    default: sbe

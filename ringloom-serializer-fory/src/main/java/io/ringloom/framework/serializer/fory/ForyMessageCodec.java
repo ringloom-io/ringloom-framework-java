@@ -75,13 +75,20 @@ public final class ForyMessageCodec<T> implements MessageEncoder<T>, MessageDeco
             }
             Object value = segment.isNative()
                     ? fory.deserialize(segment.address(), Math.toIntExact(length))
-                    : fory.deserialize(segment.toArray(ValueLayout.JAVA_BYTE));
+                    : fory.deserialize(copyPayload(segment, length));
             return decodedType.cast(value);
         } catch (RingloomSerializationException ex) {
             throw ex;
         } catch (RuntimeException ex) {
             throw new RingloomSerializationException("failed to decode Fory payload", ex);
         }
+    }
+
+    private static byte[] copyPayload(MemorySegment segment, long length) {
+        // The source segment may be larger than the payload (length-limited buffer); copy only length bytes.
+        byte[] bytes = new byte[Math.toIntExact(length)];
+        MemorySegment.copy(segment, ValueLayout.JAVA_BYTE, 0, bytes, 0, bytes.length);
+        return bytes;
     }
 
     private void serialize(T value, ForyEncodeContext context) {

@@ -33,10 +33,13 @@ import org.slf4j.Logger;
  * callbacks run inline on the thread that drives {@code advanceReplicatedCount}/{@code sweepTimeouts}
  * (the framework control thread).
  *
- * <p>All mutating methods are {@code synchronized}: the publish thread registers entries while the
- * control thread advances the replicated count and sweeps timeouts. The critical sections are short
- * (prefix completion + pooled release) and callbacks run inside the lock to preserve the "inline on
- * control thread" contract; callbacks must not block.
+ * <p>State is guarded by the registry monitor: the publish thread registers entries while the
+ * control thread advances the replicated count and sweeps timeouts. Callbacks are <em>not</em> run
+ * under the monitor: completed entries are queued under it and dispatched after it is released
+ * (serialized by a separate dispatch lock). Callers may therefore register acks while holding their
+ * own locks (e.g. the KV writer batch lock) and callbacks may publish/write again without a
+ * lock-order inversion. A completed entry returns to the pool only after its callback ran, so the
+ * dispatch queue never exceeds {@code maxPending}. Callbacks must not block.
  */
 public final class TopicAckRegistry {
     private final int maxPending;
@@ -46,6 +49,10 @@ public final class TopicAckRegistry {
     private final PendingAck[] slots;
     private final Deque<PendingAck> free;
     private final List<PendingAck> pending = new ArrayList<>();
+    /** Completed entries awaiting callback dispatch (guarded by {@code this}). */
+    private final Deque<PendingAck> completed;
+    /** Serializes callback dispatch so callbacks never run concurrently with each other. */
+    private final Object dispatchLock = new Object();
 
     private long seenEpoch = 0L;
     private long currentReplicatedCount = 0L;
@@ -58,6 +65,7 @@ public final class TopicAckRegistry {
     private final RingloomCounter timeoutCounter;
     private final RingloomCounter leaderChangedCounter;
     private final RingloomCounter shutdownCounter;
+    private final RingloomCounter revokedCounter;
 
     /**
      * Creates a new registry.
@@ -75,6 +83,7 @@ public final class TopicAckRegistry {
         this.logger = logger;
         this.slots = new PendingAck[maxPending];
         this.free = new ArrayDeque<>(maxPending);
+        this.completed = new ArrayDeque<>(maxPending);
         for (int i = 0; i < maxPending; i++) {
             PendingAck entry = new PendingAck(i);
             slots[i] = entry;
@@ -86,6 +95,7 @@ public final class TopicAckRegistry {
         this.timeoutCounter = registerCounter(metrics, "topic.ack.timeout");
         this.leaderChangedCounter = registerCounter(metrics, "topic.ack.leader_changed");
         this.shutdownCounter = registerCounter(metrics, "topic.ack.shutdown");
+        this.revokedCounter = registerCounter(metrics, "topic.ack.revoked");
     }
 
     private static RingloomGauge registerGauge(RingloomMetrics metrics, String name) {
@@ -144,21 +154,34 @@ public final class TopicAckRegistry {
      * @param replicatedCount  the replicated publish count reported by {@link
      *                         io.ringloom.service.TopicPublisher#replicatedCount()}
      */
-    public synchronized void advanceReplicatedCount(long leaderEpoch, long replicatedCount) {
+    public void advanceReplicatedCount(long leaderEpoch, long replicatedCount) {
+        synchronized (this) {
+            advanceLocked(leaderEpoch, replicatedCount);
+        }
+        dispatchCompleted();
+    }
+
+    private void advanceLocked(long leaderEpoch, long replicatedCount) {
         if (leaderEpoch < seenEpoch) {
             return;
         }
         if (leaderEpoch > seenEpoch) {
             seenEpoch = leaderEpoch;
         }
-        if (replicatedCount <= currentReplicatedCount) {
+        if (replicatedCount < currentReplicatedCount) {
             return;
         }
-        currentReplicatedCount = replicatedCount;
-        if (replicatedCountGauge != null) {
-            replicatedCountGauge.set(replicatedCount);
+        if (replicatedCount > currentReplicatedCount) {
+            currentReplicatedCount = replicatedCount;
+            if (replicatedCountGauge != null) {
+                replicatedCountGauge.set(replicatedCount);
+            }
         }
-        completeAckedPrefix(leaderEpoch, replicatedCount);
+        // Also scan when the count is unchanged: an entry may have been registered after the count
+        // already covered its index (publish raced with the control-thread poll).
+        if (!pending.isEmpty()) {
+            completeAckedPrefix(leaderEpoch, replicatedCount);
+        }
     }
 
     /**
@@ -169,8 +192,11 @@ public final class TopicAckRegistry {
      *
      * @param newLeaderEpoch the publisher's new leader epoch
      */
-    public synchronized void onLeaderChanged(long newLeaderEpoch) {
-        completeStaleEpochs(newLeaderEpoch);
+    public void onLeaderChanged(long newLeaderEpoch) {
+        synchronized (this) {
+            completeStaleEpochs(newLeaderEpoch);
+        }
+        dispatchCompleted();
     }
 
     /**
@@ -179,7 +205,18 @@ public final class TopicAckRegistry {
      * @param nowNanos the current {@link System#nanoTime()} value
      * @return the number of entries timed out
      */
-    public synchronized int sweepTimeouts(long nowNanos) {
+    public int sweepTimeouts(long nowNanos) {
+        int swept;
+        synchronized (this) {
+            swept = sweepLocked(nowNanos);
+        }
+        if (swept > 0) {
+            dispatchCompleted();
+        }
+        return swept;
+    }
+
+    private int sweepLocked(long nowNanos) {
         if (pending.isEmpty()) {
             return 0;
         }
@@ -201,8 +238,28 @@ public final class TopicAckRegistry {
      *
      * @param status the completion status (typically {@link AckStatus#SHUTDOWN})
      */
-    public synchronized void completeAll(AckStatus status) {
-        shutdown = true;
+    public void completeAll(AckStatus status) {
+        synchronized (this) {
+            shutdown = true;
+            completePendingLocked(status);
+        }
+        dispatchCompleted();
+    }
+
+    /**
+     * Completes every pending entry with the given status without blocking further registrations
+     * (used when a KV writer lease is revoked but the writer may be granted again later).
+     *
+     * @param status the completion status (typically {@link AckStatus#REVOKED})
+     */
+    public void completePending(AckStatus status) {
+        synchronized (this) {
+            completePendingLocked(status);
+        }
+        dispatchCompleted();
+    }
+
+    private void completePendingLocked(AckStatus status) {
         for (int i = pending.size() - 1; i >= 0; i--) {
             PendingAck entry = pending.remove(i);
             complete(entry, status);
@@ -253,25 +310,50 @@ public final class TopicAckRegistry {
         }
     }
 
+    /** Marks an entry completed and queues it for dispatch. Caller holds the registry monitor. */
     private void complete(PendingAck entry, AckStatus status) {
-        long publishIndex = entry.publishIndex;
-        AckCallback callback = entry.callback;
-        Object userContext = entry.userContext;
-        entry.clear();
-        free.addLast(entry);
+        entry.status = status;
+        completed.addLast(entry);
         incrementCounter(counterFor(status));
         if (pendingGauge != null) {
             pendingGauge.set(pending.size());
         }
-        if (callback != null) {
-            try {
-                callback.onComplete(publishIndex, status, userContext);
-            } catch (Throwable ex) {
-                if (logger != null) {
-                    logger.warn("Topic ack callback threw for index {}", publishIndex, ex);
+    }
+
+    /**
+     * Invokes callbacks for queued completions outside the registry monitor, then returns each entry
+     * to the pool. Reentrant: a callback that triggers another completion drains the same queue.
+     */
+    private void dispatchCompleted() {
+        synchronized (dispatchLock) {
+            PendingAck entry;
+            while ((entry = pollCompleted()) != null) {
+                long publishIndex = entry.publishIndex;
+                AckCallback callback = entry.callback;
+                Object userContext = entry.userContext;
+                AckStatus status = entry.status;
+                try {
+                    if (callback != null) {
+                        callback.onComplete(publishIndex, status, userContext);
+                    }
+                } catch (Throwable ex) {
+                    if (logger != null) {
+                        logger.warn("Topic ack callback threw for index {}", publishIndex, ex);
+                    }
+                } finally {
+                    release(entry);
                 }
             }
         }
+    }
+
+    private synchronized PendingAck pollCompleted() {
+        return completed.pollFirst();
+    }
+
+    private synchronized void release(PendingAck entry) {
+        entry.clear();
+        free.addLast(entry);
     }
 
     private RingloomCounter counterFor(AckStatus status) {
@@ -280,6 +362,7 @@ public final class TopicAckRegistry {
             case ACK_TIMEOUT -> timeoutCounter;
             case LEADER_CHANGED -> leaderChangedCounter;
             case SHUTDOWN -> shutdownCounter;
+            case REVOKED -> revokedCounter;
         };
     }
 

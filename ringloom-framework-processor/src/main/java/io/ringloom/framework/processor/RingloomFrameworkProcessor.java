@@ -4,6 +4,15 @@ package io.ringloom.framework.processor;
 import io.ringloom.framework.annotation.RingloomApplication;
 import io.ringloom.framework.annotation.RingloomClient;
 import io.ringloom.framework.annotation.RingloomHandler;
+import io.ringloom.framework.annotation.RingloomKvClear;
+import io.ringloom.framework.annotation.RingloomKvContains;
+import io.ringloom.framework.annotation.RingloomKvDelete;
+import io.ringloom.framework.annotation.RingloomKvForEach;
+import io.ringloom.framework.annotation.RingloomKvGet;
+import io.ringloom.framework.annotation.RingloomKvPut;
+import io.ringloom.framework.annotation.RingloomKvStore;
+import io.ringloom.framework.annotation.RingloomKvTtl;
+import io.ringloom.framework.annotation.RingloomKvWriterStateHandler;
 import io.ringloom.framework.annotation.RingloomPartitionKey;
 import io.ringloom.framework.annotation.RingloomRequest;
 import io.ringloom.framework.annotation.RingloomSchedule;
@@ -14,17 +23,22 @@ import io.ringloom.framework.annotation.RingloomTopicPublisher;
 import io.ringloom.framework.processor.generation.ApplicationSourceGenerator;
 import io.ringloom.framework.processor.generation.ClientSourceGenerator;
 import io.ringloom.framework.processor.generation.DispatcherSourceGenerator;
+import io.ringloom.framework.processor.generation.KvStoreSourceGenerator;
 import io.ringloom.framework.processor.generation.ProviderSourceGenerator;
 import io.ringloom.framework.processor.generation.SourceWriter;
 import io.ringloom.framework.processor.generation.TopicDispatcherSourceGenerator;
 import io.ringloom.framework.processor.generation.TopicPublisherSourceGenerator;
 import io.ringloom.framework.processor.model.Handler;
+import io.ringloom.framework.processor.model.KvStore;
+import io.ringloom.framework.processor.model.KvWriterStateHandler;
 import io.ringloom.framework.processor.model.Schedule;
 import io.ringloom.framework.processor.model.SourceHelpers;
 import io.ringloom.framework.processor.model.TopicHandler;
 import io.ringloom.framework.processor.model.TopicPublisher;
 import io.ringloom.framework.processor.validation.ClientValidator;
 import io.ringloom.framework.processor.validation.HandlerValidator;
+import io.ringloom.framework.processor.validation.KvStoreValidator;
+import io.ringloom.framework.processor.validation.KvWriterStateHandlerValidator;
 import io.ringloom.framework.processor.validation.PartitionKeyValidator;
 import io.ringloom.framework.processor.validation.ScheduleValidator;
 import io.ringloom.framework.processor.validation.TemplateRules;
@@ -61,6 +75,9 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
     private PartitionKeyValidator partitionKeyValidator;
     private TopicPublisherValidator topicPublisherValidator;
     private TopicHandlerValidator topicHandlerValidator;
+    private KvStoreValidator kvStoreValidator;
+    private KvWriterStateHandlerValidator kvWriterStateHandlerValidator;
+    private KvStoreSourceGenerator kvStoreGenerator;
     private ClientSourceGenerator clientGenerator;
     private DispatcherSourceGenerator dispatcherGenerator;
     private ApplicationSourceGenerator applicationGenerator;
@@ -80,7 +97,16 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                 RingloomSchedule.class.getCanonicalName(),
                 RingloomTopicPublisher.class.getCanonicalName(),
                 RingloomTopicPublish.class.getCanonicalName(),
-                RingloomTopicHandler.class.getCanonicalName());
+                RingloomTopicHandler.class.getCanonicalName(),
+                RingloomKvStore.class.getCanonicalName(),
+                RingloomKvGet.class.getCanonicalName(),
+                RingloomKvContains.class.getCanonicalName(),
+                RingloomKvForEach.class.getCanonicalName(),
+                RingloomKvPut.class.getCanonicalName(),
+                RingloomKvDelete.class.getCanonicalName(),
+                RingloomKvClear.class.getCanonicalName(),
+                RingloomKvTtl.class.getCanonicalName(),
+                RingloomKvWriterStateHandler.class.getCanonicalName());
     }
 
     @Override
@@ -93,6 +119,9 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         this.partitionKeyValidator = new PartitionKeyValidator(ctx);
         this.topicPublisherValidator = new TopicPublisherValidator(ctx);
         this.topicHandlerValidator = new TopicHandlerValidator(ctx);
+        this.kvStoreValidator = new KvStoreValidator(ctx);
+        this.kvWriterStateHandlerValidator = new KvWriterStateHandlerValidator(ctx);
+        this.kvStoreGenerator = new KvStoreSourceGenerator(ctx, templates);
         this.clientGenerator = new ClientSourceGenerator(ctx, templates);
         this.dispatcherGenerator = new DispatcherSourceGenerator(ctx, templates);
         this.applicationGenerator = new ApplicationSourceGenerator(ctx, templates);
@@ -117,12 +146,25 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         applications.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
         topicPublisherInterfaces.sort(
                 Comparator.comparing(t -> t.getQualifiedName().toString()));
+        List<TypeElement> kvStoreInterfaces =
+                SourceHelpers.types(roundEnv.getElementsAnnotatedWith(RingloomKvStore.class));
+        kvStoreInterfaces.sort(Comparator.comparing(t -> t.getQualifiedName().toString()));
 
         List<TopicPublisher> topicPublishers = new ArrayList<>();
         for (TypeElement publisherInterface : topicPublisherInterfaces) {
             TopicPublisher topicPublisher = topicPublisherValidator.validate(publisherInterface);
             topicPublishers.add(topicPublisher);
             topicPublisherGenerator.generate(topicPublisher);
+        }
+        List<KvStore> kvStores = new ArrayList<>();
+        for (TypeElement storeInterface : kvStoreInterfaces) {
+            kvStores.add(kvStoreValidator.validate(storeInterface));
+        }
+        kvStoreValidator.validateMerged(kvStores);
+        for (KvStore kvStore : kvStores) {
+            if (kvStore.storeInterface().getKind() == javax.lang.model.element.ElementKind.INTERFACE) {
+                kvStoreGenerator.generate(kvStore);
+            }
         }
         for (TypeElement client : clients) {
             clientValidator.validate(client);
@@ -136,7 +178,7 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                         "multiple @RingloomApplication types require an explicit single application");
                 return true;
             }
-            generateApplication(application, clients, components, topicPublishers);
+            generateApplication(application, clients, components, topicPublishers, kvStores);
         }
         generated = true;
         return false;
@@ -146,7 +188,9 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
             TypeElement application,
             List<TypeElement> clients,
             List<TypeElement> components,
-            List<TopicPublisher> topicPublishers) {
+            List<TopicPublisher> topicPublishers,
+            List<KvStore> kvStores) {
+        List<KvWriterStateHandler> kvWriterStateHandlers = new ArrayList<>();
         Map<Integer, ExecutableElement> handlerTemplateIds = new HashMap<>();
         List<Handler> handlers = new ArrayList<>();
         List<Schedule> schedules = new ArrayList<>();
@@ -175,6 +219,15 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                 RingloomTopicHandler topicHandlerAnnotation = enclosed.getAnnotation(RingloomTopicHandler.class);
                 if (topicHandlerAnnotation != null && enclosed instanceof ExecutableElement method) {
                     topicHandlers.add(topicHandlerValidator.validate(component, method, topicHandlerAnnotation));
+                }
+                RingloomKvWriterStateHandler kvStateAnnotation =
+                        enclosed.getAnnotation(RingloomKvWriterStateHandler.class);
+                if (kvStateAnnotation != null && enclosed instanceof ExecutableElement method) {
+                    KvWriterStateHandler kvHandler =
+                            kvWriterStateHandlerValidator.validate(component, method, kvStateAnnotation, kvStores);
+                    if (kvHandler != null) {
+                        kvWriterStateHandlers.add(kvHandler);
+                    }
                 }
             }
         }
@@ -206,6 +259,8 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
                 topicPublishers,
                 topicHandlers,
                 topicDispatcherName,
+                kvStores,
+                kvWriterStateHandlers,
                 application);
         providerGenerator.generate(pkg, providerName, appName, application);
         new SourceWriter(ctx).writeServiceFile(pkg, providerName);
@@ -225,6 +280,12 @@ public final class RingloomFrameworkProcessor extends javax.annotation.processin
         }
         for (Element schedule : roundEnv.getElementsAnnotatedWith(RingloomSchedule.class)) {
             Element enclosing = schedule.getEnclosingElement();
+            if (enclosing instanceof TypeElement component) {
+                result.putIfAbsent(component.getQualifiedName().toString(), component);
+            }
+        }
+        for (Element kvHandler : roundEnv.getElementsAnnotatedWith(RingloomKvWriterStateHandler.class)) {
+            Element enclosing = kvHandler.getEnclosingElement();
             if (enclosing instanceof TypeElement component) {
                 result.putIfAbsent(component.getQualifiedName().toString(), component);
             }

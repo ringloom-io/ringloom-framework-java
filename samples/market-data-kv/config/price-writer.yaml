@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+ringloom:
+  service:
+    name: price-writer
+    storagePath: /tmp/ringloom-framework-market-data-kv/storage
+    group: market-data-java-kv
+  serializers:
+    default: sbe
+  kv:
+    enabled: true
+    stores:
+      prices:
+        # Queue for the writer lease instead of failing startup when another writer holds it.
+        acquire: wait
+        maxPendingAcks: 1024

@@ -13,9 +13,11 @@ import io.ringloom.framework.config.RingloomConfigLoader;
 import io.ringloom.framework.dispatch.MessageContext;
 import io.ringloom.framework.dispatch.MessageExecutionPolicy;
 import io.ringloom.framework.generated.GeneratedClientBinding;
+import io.ringloom.framework.generated.GeneratedKvStoreBinding;
 import io.ringloom.framework.generated.GeneratedMessageDispatcher;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.generated.GeneratedRingloomApplicationProvider;
+import io.ringloom.framework.kv.KvRuntime;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import io.ringloom.framework.request.RequestResponseRegistry;
@@ -41,7 +43,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Avaje custom module that registers RingLoom runtime, generated metadata, serializers, metrics,
- * dispatcher, request registry, and generated clients as Avaje beans.
+ * dispatcher, request registry, generated clients, generated KV stores, and (when
+ * {@code ringloom.kv.enabled}) the {@link KvRuntime} as Avaje beans.
  */
 public final class RingloomAvajeModule implements AvajeModule.Custom {
 
@@ -114,6 +117,7 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
             MessageExecutionPolicy.class,
             RequestResponseRegistry.class,
             GeneratedMessageDispatcher.class,
+            KvRuntime.class,
         };
     }
 
@@ -132,6 +136,10 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         AtomicReference<RingloomRuntime> runtimeReference = new AtomicReference<>();
         if (avajeConfig.registerGeneratedClients()) {
             registerLazyGeneratedClients(builder, generatedApplication, runtimeReference);
+            registerLazyGeneratedKvStores(builder, generatedApplication, runtimeReference);
+        }
+        if (config.kv().enabled()) {
+            registerKvRuntime(builder, runtimeReference);
         }
         buildDiscoveredAvajeModules(builder);
         registerAbsent(builder, GeneratedRingloomApplication.class, generatedApplication);
@@ -204,6 +212,55 @@ public final class RingloomAvajeModule implements AvajeModule.Custom {
         Class<T> clientType = binding.clientType();
         if (!builder.contains(clientType)) {
             builder.withBean(clientType, runtime.generatedClient(clientType));
+        }
+    }
+
+    void registerGeneratedKvStores(
+            Builder builder, GeneratedRingloomApplication generatedApplication, RingloomRuntime runtime) {
+        for (GeneratedKvStoreBinding binding : generatedApplication.kvStores()) {
+            registerGeneratedKvStore(builder, binding.storeType(), runtime);
+        }
+    }
+
+    private <T> void registerGeneratedKvStore(Builder builder, Class<T> storeType, RingloomRuntime runtime) {
+        if (!builder.contains(storeType)) {
+            builder.withBean(storeType, runtime.generatedClient(storeType));
+        }
+    }
+
+    void registerLazyGeneratedKvStores(
+            Builder builder,
+            GeneratedRingloomApplication generatedApplication,
+            AtomicReference<RingloomRuntime> runtimeReference) {
+        for (GeneratedKvStoreBinding binding : generatedApplication.kvStores()) {
+            registerLazyGeneratedKvStore(builder, binding.storeType(), runtimeReference);
+        }
+    }
+
+    private <T> void registerLazyGeneratedKvStore(
+            Builder builder, Class<T> storeType, AtomicReference<RingloomRuntime> runtimeReference) {
+        if (!builder.contains(storeType)) {
+            builder.withBean(storeType, lazyGeneratedClient(storeType, runtimeReference));
+        }
+    }
+
+    /**
+     * Registers {@link KvRuntime} through a provider: the KV runtime only exists once
+     * {@link RingloomRuntime#start()} has run, which happens after the scope is wired.
+     */
+    private static void registerKvRuntime(Builder builder, AtomicReference<RingloomRuntime> runtimeReference) {
+        if (builder.isBeanAbsent(KvRuntime.class)) {
+            builder.registerProvider(() -> {
+                RingloomRuntime runtime = runtimeReference.get();
+                try {
+                    if (runtime != null) {
+                        return runtime.kv();
+                    }
+                } catch (IllegalStateException ex) {
+                    // kv() fails until start() created the KV runtime (KV is enabled here).
+                }
+                throw new IllegalStateException("KvRuntime is available after the RingLoom runtime has started");
+            });
         }
     }
 

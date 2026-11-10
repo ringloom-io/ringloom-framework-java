@@ -1,0 +1,7 @@
+
+  @Override
+  public int {{methodName}}({{{parameters}}}) {
+{{#ack}}    Objects.requireNonNull({{callbackName}}, "callback");
+    return this.writer.clearAck({{callbackName}}, {{contextName}});
+{{/ack}}{{^ack}}    return this.writer.clear();
+{{/ack}}  }

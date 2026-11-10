@@ -44,7 +44,14 @@ final class ProcessorTestSupport {
                     }
                     """;
 
+    /** Compilation outcome with the error messages reported by javac and the processor. */
+    record Result(boolean success, List<String> errors, List<String> warnings) {}
+
     static boolean compile(Path classes, Path generated, List<SimpleJavaFileObject> sources) {
+        return compileWithDiagnostics(classes, generated, sources).success();
+    }
+
+    static Result compileWithDiagnostics(Path classes, Path generated, List<SimpleJavaFileObject> sources) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new javax.tools.DiagnosticCollector<javax.tools.JavaFileObject>();
         List<String> options = List.of(
@@ -58,12 +65,19 @@ final class ProcessorTestSupport {
                 RingloomFrameworkProcessor.class.getName());
         boolean success = compiler.getTask(null, null, diagnostics, options, null, sources)
                 .call();
+        List<String> errors = new java.util.ArrayList<>();
+        List<String> warnings = new java.util.ArrayList<>();
         for (Diagnostic<?> diagnostic : diagnostics.getDiagnostics()) {
+            if (diagnostic.getKind() == Diagnostic.Kind.WARNING
+                    || diagnostic.getKind() == Diagnostic.Kind.MANDATORY_WARNING) {
+                warnings.add(diagnostic.getMessage(java.util.Locale.ROOT));
+            }
             if (diagnostic.getKind() == Diagnostic.Kind.ERROR) {
                 System.err.println(diagnostic);
+                errors.add(diagnostic.getMessage(java.util.Locale.ROOT));
             }
         }
-        return success;
+        return new Result(success, List.copyOf(errors), List.copyOf(warnings));
     }
 
     static SimpleJavaFileObject source(String className, String content) {

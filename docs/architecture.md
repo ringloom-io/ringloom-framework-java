@@ -1203,6 +1203,61 @@ native runtime):
    `topic.lag.behind_leader` (from the tailer index vs broker HWM, when exposed).
 3. Prefetcher: `topic.maintenance.work_units`, `topic.maintenance.page_faults`.
 
+## Replicated KV stores
+
+RingLoom KV stores are named, replicated key-value stores with **one writer and many readers**. Each
+store is backed by a reserved persistent topic `__kv.<store>`. Every KV-enabled broker applies that
+topic's log to a local LMDB copy, and readers on the host look up keys through shared memory with no
+broker round trip. The authoritative native design is
+[`docs/kv-store-spec.md`](https://github.com/ringloom-io/ringloom/blob/main/docs/kv-store-spec.md) in
+the native project. The implementation spec for this framework is
+[16-kv-stores.md](impl/16-kv-stores.md).
+
+As with topics, the framework uses KV only through the Java bindings and never runs broker-side KV
+components.
+
+### KV design decisions
+
+1. **Two layers.** `runtime.kv()` exposes raw `KvReaderStore`/`KvWriterStore` handles (segments in,
+   status codes out). `@RingloomKvStore` interfaces generate typed proxies on top of them, with keys
+   encoded inline (`long`, `int`, `String`, `MemorySegment`, `byte[]`, or a key serializer) and values
+   encoded through the serializer SPI.
+2. **Reads are local and synchronous.** There is no dispatch path. A `get` copies the value into
+   per-thread scratch memory and decodes it, using a flyweight when one is registered. Flyweights stay
+   valid until the next KV read on the same thread. Framework-owned platform threads keep a bound native
+   read session. Virtual threads and overflow borrow sessions from a bounded per-store pool.
+3. **Control-thread ownership.** Writer lease transitions, `replicate_once` ack completion, background
+   reader opens, and status/metrics refresh all run on the control thread, in a post-poll hook shared
+   with topic ack polling. Native opens never run at the same time as control polling.
+4. **Readers don't block startup by default.** A store that doesn't exist yet or isn't built locally is
+   retried in the background, and reads return `NOT_READY` until it opens. `required: true` makes
+   startup wait and fail on timeout.
+5. **Writer lease.** The default is fail-if-held, which fails startup. `acquire: wait` makes a standby
+   writer. `@RingloomKvWriterStateHandler` methods are notified of `GRANTED`, `QUEUED`, `REASSERTING`, and
+   `REVOKED` transitions after native polling returns, so they may call KV APIs.
+6. **Acks reuse the topic ack registry.** `TopicAckRegistry`, `AckCallback`, and `AckStatus` are driven
+   by the writer's acked sequence and leader epoch. A revoked lease completes pending acks with
+   `AckStatus.REVOKED`.
+7. **No change notifications.** The backing topic is reserved, so stores cannot be watched. Publish
+   change events on a separate topic if needed.
+
+### KV zero-allocation profile
+
+| Path | Zero allocations |
+|---|---|
+| Generated `get` returning a flyweight, or `get(K, KvValue<V>)` with a flyweight, on a platform thread | Yes |
+| Generated `contains` | Yes |
+| Generated `put`/`delete`/`clear` with built-in keys and a zero-copy encoder | Yes |
+| `replicate_once` ack registration and completion | Yes |
+| `forEachRaw` | Yes |
+| `forEach` with decoded values, any read on a virtual thread, store generation switch | No guarantee |
+
+The KV figures measure the framework's work only. The bindings' `RingloomService.pollControl` currently
+allocates a small arena per call. That cost applies to every control-loop iteration, not just KV, and is
+tracked as a binding follow-up in [16-kv-stores.md](impl/16-kv-stores.md) §15.2. Per-thread KV scratch
+is native memory (from `Arena.ofAuto` on virtual threads), because native writes accept only native
+segments.
+
 ## Example generated flow
 
 Startup:
@@ -1324,3 +1379,5 @@ Each phase has a detailed implementation specification under `docs/java/impl/`.
     [14-topic-annotation-model.md](impl/14-topic-annotation-model.md).
 15. **Topic publisher runtime & ack registry**:
     [15-topic-publisher-runtime.md](impl/15-topic-publisher-runtime.md).
+16. **Replicated KV stores** (tasks 16A–16G, including binding changes):
+    [16-kv-stores.md](impl/16-kv-stores.md).

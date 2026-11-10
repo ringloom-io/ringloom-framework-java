@@ -263,13 +263,8 @@ public final class TopicRuntime implements AutoCloseable {
             if (registry == null) {
                 continue;
             }
-            long epoch = publisher.leaderEpoch();
-            long replicatedCount = publisher.replicatedCount();
-            long knownEpoch = registry.knownEpoch();
-            registry.advanceReplicatedCount(epoch, replicatedCount);
-            if (epoch > knownEpoch && epoch > 0) {
-                registry.onLeaderChanged(epoch);
-            }
+            io.ringloom.framework.topic.ack.AckFeedbackPoller.poll(
+                    registry, publisher.leaderEpoch(), publisher.replicatedCount());
         }
     }
 

@@ -50,9 +50,36 @@ public final class TestBroker implements AutoCloseable {
         return start(repoRoot, workspace, (short) 1, 19001, "ringloom-framework-test", true);
     }
 
+    /**
+     * Starts a single-node broker with persistent topics and replicated KV stores enabled
+     * ({@code start-test-broker.sh --kv}).
+     *
+     * @param repoRoot  the ringloom repo root containing {@code scripts/start-test-broker.sh}
+     * @param workspace a clean workspace directory the broker may use
+     * @return the started broker
+     * @throws IOException          if the broker process fails to start
+     * @throws InterruptedException if the launch wait is interrupted
+     */
+    public static TestBroker startKvEnabled(Path repoRoot, Path workspace) throws IOException, InterruptedException {
+        return start(repoRoot, workspace, (short) 1, 19001, "ringloom-framework-test", true, true);
+    }
+
     /** Starts a single-node broker with explicit topics flag. */
     public static TestBroker start(
             Path repoRoot, Path workspace, short nodeId, int port, String group, boolean topicsEnabled)
+            throws IOException, InterruptedException {
+        return start(repoRoot, workspace, nodeId, port, group, topicsEnabled, false);
+    }
+
+    /** Starts a single-node broker with explicit topics and KV flags ({@code --kv} implies topics). */
+    public static TestBroker start(
+            Path repoRoot,
+            Path workspace,
+            short nodeId,
+            int port,
+            String group,
+            boolean topicsEnabled,
+            boolean kvEnabled)
             throws IOException, InterruptedException {
         Path brokerBin = Path.of(System.getProperty("ringloom.brokerBin"));
         ArrayList<String> command = new ArrayList<>();
@@ -71,6 +98,9 @@ public final class TestBroker implements AutoCloseable {
         command.add(brokerBin.getParent().toString());
         if (topicsEnabled) {
             command.add("--topics");
+        }
+        if (kvEnabled) {
+            command.add("--kv");
         }
 
         Process process = new ProcessBuilder(command)

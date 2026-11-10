@@ -1,0 +1,93 @@
+{{#packageName}}package {{packageName}};
+
+{{/packageName}}import io.ringloom.framework.RingloomRuntime;
+import io.ringloom.framework.kv.KvGeneratedSupport;
+import io.ringloom.framework.kv.KvReaderStore;
+import io.ringloom.framework.kv.KvRuntime;
+import io.ringloom.framework.kv.KvStoreStatus;
+import io.ringloom.framework.kv.KvThreadState;
+import io.ringloom.framework.kv.KvWriterState;
+import io.ringloom.framework.kv.KvWriterStore;
+import io.ringloom.framework.kv.codec.KvKeyCodecs;
+import io.ringloom.framework.serialization.FlyweightDecoder;
+import io.ringloom.framework.serialization.MessageDecoder;
+import io.ringloom.framework.serialization.MessageEncoder;
+import io.ringloom.framework.serialization.SerializerRegistry;
+import io.ringloom.framework.status.RingloomHandlerStatus;
+import io.ringloom.framework.topic.ack.AckCallback;
+import io.ringloom.service.RingloomStatus;
+import java.lang.foreign.MemorySegment;
+import java.util.Objects;
+
+/**
+ * Generated {@code @RingloomKvStore} proxy for {@link {{interfaceType}}}. Codecs are resolved once in the
+ * constructor; built-in keys are encoded inline into the calling thread's KV scratch. A flyweight
+ * returned from a {@code get} is valid until the next KV read of any store on the same thread.
+ */
+public final class {{generatedName}} implements {{interfaceType}} {
+  private static final String STORE = "{{storeName}}";
+  private static final int MAX_KEY_LENGTH = {{maxKeyLength}};
+
+  private final KvRuntime kv;
+{{#reads}}  private final KvReaderStore reader;
+{{/reads}}{{#writes}}  private final KvWriterStore writer;
+{{/writes}}{{#hasKeySerializer}}  private final MessageEncoder<{{{keyType}}}> keyEncoder;
+{{/hasKeySerializer}}{{{codecFields}}}
+  public {{generatedName}}(RingloomRuntime runtime, SerializerRegistry serializers) {
+    Objects.requireNonNull(runtime, "runtime");
+    Objects.requireNonNull(serializers, "serializers");
+    this.kv = runtime.kv();
+{{#reads}}    this.reader = kv.reader(STORE);
+{{/reads}}{{#writes}}    this.writer = kv.writer(STORE);
+{{/writes}}{{#hasKeySerializer}}    this.keyEncoder = KvGeneratedSupport.requireEncoder(
+        serializers, runtime.resolveSerializerName("{{keySerializer}}"), {{{keyType}}}.class, STORE);
+{{/hasKeySerializer}}{{{codecInit}}}  }
+
+  public String storeName() {
+    return STORE;
+  }
+{{#readerOperations}}
+
+  @Override
+  public boolean isReady() {
+    return reader.isReady();
+  }
+
+  @Override
+  public KvStoreStatus status() {
+    return kv.status(STORE);
+  }
+{{/readerOperations}}
+{{#writerOperations}}
+
+  @Override
+  public KvWriterState writerState() {
+    return writer.state();
+  }
+
+  @Override
+  public long writerEpoch() {
+    return writer.writerEpoch();
+  }
+
+  @Override
+  public int beginBatch() {
+    return writer.beginBatch();
+  }
+
+  @Override
+  public int commitBatch() {
+    return writer.commitBatch();
+  }
+
+  @Override
+  public int commitBatchAck(AckCallback callback, Object context) {
+    return writer.commitBatchAck(callback, context);
+  }
+
+  @Override
+  public void abandonBatch() {
+    writer.abandonBatch();
+  }
+{{/writerOperations}}
+{{{methodSources}}}}

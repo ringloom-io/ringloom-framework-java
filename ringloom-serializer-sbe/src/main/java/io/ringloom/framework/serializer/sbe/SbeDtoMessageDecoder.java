@@ -48,7 +48,7 @@ public final class SbeDtoMessageDecoder<D, T> implements MessageDecoder<T> {
     @Override
     public T decode(ReadableMessageBuffer source, DecodeContext context) {
         SbeDecodeContext sbeContext = contexts.get();
-        MemorySegmentDirectBuffer buffer = sbeContext.wrap(source.segment());
+        MemorySegmentDirectBuffer buffer = sbeContext.wrap(source.segment(), source.length());
         D decoder = sbeContext.flyweight(decoderType, decoderFactory);
         decoder = wrapOperation.wrap(decoder, buffer, sbeContext);
         T dto = sbeContext.flyweight(dtoType, dtoFactory);

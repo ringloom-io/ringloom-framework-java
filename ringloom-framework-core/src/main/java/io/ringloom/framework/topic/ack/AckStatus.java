@@ -2,7 +2,7 @@
 package io.ringloom.framework.topic.ack;
 
 /**
- * Outcome of a pending {@code replicate_once} topic publish, passed to {@link AckCallback}.
+ * Outcome of a pending {@code replicate_once} topic publish or KV write, passed to {@link AckCallback}.
  */
 public enum AckStatus {
     /** The publish index was applied by at least one replica (or appended on a single-node broker). */
@@ -12,5 +12,10 @@ public enum AckStatus {
     /** The topic leader changed before the publish was acked under the previous epoch. */
     LEADER_CHANGED,
     /** The runtime is shutting down and all pending entries were released. */
-    SHUTDOWN
+    SHUTDOWN,
+    /**
+     * KV only: the writer lease was revoked; frames published under it are fenced and will not take
+     * effect.
+     */
+    REVOKED
 }

@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 final class TopicAckRegistryTest {
@@ -105,5 +107,47 @@ final class TopicAckRegistryTest {
         registry.advanceReplicatedCount(1L, 67L);
         // The 8 pooled entries are back in the free queue.
         assertThat(registry.register(68, 1L, RECORDING_CALLBACK, sink, 0L)).isTrue();
+    }
+
+    @Test
+    void callbacksRunOutsideRegistryMonitor() throws Exception {
+        // A callback that waits for another thread to register (e.g. a KV writer holding its batch lock
+        // while registering) must not deadlock: callbacks are dispatched after the monitor is released.
+        List<Boolean> registeredFromOtherThread = new ArrayList<>();
+        AckCallback callback = (publishIndex, status, userContext) -> {
+            CompletableFuture<Boolean> other =
+                    CompletableFuture.supplyAsync(() -> registry.register(71, 1L, null, null, 0L));
+            try {
+                registeredFromOtherThread.add(other.get(5, TimeUnit.SECONDS));
+            } catch (Exception ex) {
+                throw new AssertionError("register blocked while a callback was running", ex);
+            }
+        };
+        registry.register(70, 1L, callback, null, 0L);
+
+        registry.advanceReplicatedCount(1L, 70L);
+
+        assertThat(registeredFromOtherThread).containsExactly(true);
+        assertThat(registry.pendingCount()).isEqualTo(1);
+    }
+
+    @Test
+    void callbackMayRegisterAndCompleteReentrantly() {
+        List<Completion> sink = new ArrayList<>();
+        AckCallback chaining = (publishIndex, status, userContext) -> {
+            sink.add(new Completion(publishIndex, status, null));
+            if (publishIndex == 80) {
+                registry.register(81, 1L, RECORDING_CALLBACK, sink, 0L);
+                registry.advanceReplicatedCount(1L, 81L);
+            }
+        };
+        registry.register(80, 1L, chaining, null, 0L);
+
+        registry.advanceReplicatedCount(1L, 80L);
+
+        assertThat(sink)
+                .containsExactly(
+                        new Completion(80L, AckStatus.ACKED, null), new Completion(81L, AckStatus.ACKED, null));
+        assertThat(registry.pendingCount()).isZero();
     }
 }

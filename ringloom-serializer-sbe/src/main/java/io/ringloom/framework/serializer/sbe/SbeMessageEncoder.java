@@ -36,7 +36,7 @@ public final class SbeMessageEncoder<T> implements MessageEncoder<T> {
     @Override
     public int encode(T value, WritableMessageBuffer target, EncodeContext context) {
         SbeEncodeContext sbeContext = contexts.get();
-        MemorySegmentMutableDirectBuffer buffer = sbeContext.wrap(target.segment());
+        MemorySegmentMutableDirectBuffer buffer = sbeContext.wrap(target.segment(), target.length());
         return encodeOperation.encode(value, buffer, sbeContext);
     }
 

@@ -1,0 +1,10 @@
+
+  @Override
+  public int {{methodName}}({{{parameters}}}) {
+{{{keySource}}}{{#segmentValue}}    return this.writer.put($keySegment, 0L, $keyLength, {{valueName}}, 0L, {{valueName}}.byteSize(), {{{ttl}}});
+{{/segmentValue}}{{^segmentValue}}    int $valueLength = KvGeneratedSupport.encodeValue(this.{{codec}}Encoder, {{valueName}}, $state, this.writer);
+    if ($valueLength < 0) {
+      return -$valueLength;
+    }
+    return this.writer.put($keySegment, 0L, $keyLength, $state.valueScratch(), 0L, $valueLength, {{{ttl}}});
+{{/segmentValue}}  }

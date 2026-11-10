@@ -25,6 +25,17 @@ public final class SbeDecodeContext {
     }
 
     /**
+     * Wraps the first {@code length} bytes of a native segment without slicing.
+     *
+     * @param segment the segment, possibly larger than {@code length}
+     * @param length the payload length
+     * @return the reusable Agrona buffer
+     */
+    public MemorySegmentDirectBuffer wrap(MemorySegment segment, long length) {
+        return buffer.wrap(segment, length);
+    }
+
+    /**
      * Returns the reusable read-only Agrona buffer.
      *
      * @return the direct buffer
@@ -44,7 +55,12 @@ public final class SbeDecodeContext {
     public <T> T flyweight(Class<T> type, Supplier<? extends T> factory) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(factory, "factory");
-        Object flyweight = flyweights.computeIfAbsent(type, ignored -> factory.get());
+        // Plain get/put: a computeIfAbsent capturing lambda would allocate on every call.
+        Object flyweight = flyweights.get(type);
+        if (flyweight == null) {
+            flyweight = Objects.requireNonNull(factory.get(), "factory returned null");
+            flyweights.put(type, flyweight);
+        }
         return type.cast(flyweight);
     }
 }

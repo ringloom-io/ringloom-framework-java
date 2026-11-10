@@ -1,0 +1,15 @@
+
+  @Override
+  public {{{valueType}}} {{methodName}}({{{parameters}}}) {
+{{{keySource}}}    int $status = KvGeneratedSupport.read(this.reader, $state, $keySegment, $keyLength);
+    if ($status != RingloomStatus.OK) {
+      return null;
+    }
+    try {
+      return KvGeneratedSupport.decode(
+          this.{{codec}}Flyweight, this.{{codec}}Decoder, $state, $state.valueScratch(), $state.outLength()[0]);
+    } catch (RuntimeException $ex) {
+      this.kv.recordDecodeError(this.reader, $ex);
+      return null;
+    }
+  }

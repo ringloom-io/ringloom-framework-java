@@ -4,6 +4,7 @@ package io.ringloom.framework.generated;
 import io.ringloom.framework.RingloomRuntime;
 import io.ringloom.framework.config.RingloomSerializerConfig;
 import io.ringloom.framework.dispatch.MessageContext;
+import io.ringloom.framework.kv.KvWriterStateEvent;
 import io.ringloom.framework.serialization.SerializerRegistry;
 import io.ringloom.service.RingloomMessage;
 import java.util.List;
@@ -177,6 +178,33 @@ public interface GeneratedRingloomApplication {
      */
     default boolean requiresTopicBindings() {
         return !topicPublishers().isEmpty() || topicDispatcher() != null;
+    }
+
+    /**
+     * Returns the generated {@code @RingloomKvStore} bindings.
+     *
+     * @return the KV store bindings
+     */
+    default List<GeneratedKvStoreBinding> kvStores() {
+        return List.of();
+    }
+
+    /**
+     * Routes a KV writer lease transition to the generated {@code @RingloomKvWriterStateHandler}
+     * methods of the store. Called on the control thread.
+     *
+     * @param event the transition
+     */
+    default void dispatchKvWriterState(KvWriterStateEvent event) {}
+
+    /**
+     * Returns whether the application declares KV stores (and therefore needs
+     * {@code ringloom.kv.enabled}).
+     *
+     * @return {@code true} when {@link #kvStores()} is not empty
+     */
+    default boolean requiresKvStores() {
+        return !kvStores().isEmpty();
     }
 
     /**

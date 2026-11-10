@@ -16,8 +16,11 @@ import io.ringloom.framework.eventloop.IdleStrategies;
 import io.ringloom.framework.eventloop.MessageConsumerAgent;
 import io.ringloom.framework.eventloop.SchedulerAgent;
 import io.ringloom.framework.generated.GeneratedClientBinding;
+import io.ringloom.framework.generated.GeneratedKvStoreBinding;
 import io.ringloom.framework.generated.GeneratedRingloomApplication;
 import io.ringloom.framework.generated.GeneratedTopicPublisherBinding;
+import io.ringloom.framework.kv.KvRuntime;
+import io.ringloom.framework.kv.KvWriterStateEvent;
 import io.ringloom.framework.metrics.RingloomMetrics;
 import io.ringloom.framework.metrics.RuntimeRingloomMetrics;
 import io.ringloom.framework.metrics.UnavailableRingloomMetrics;
@@ -72,6 +75,7 @@ public final class RingloomRuntime implements AutoCloseable {
     private EventLoop controlLoop;
     private EventLoop messageLoop;
     private io.ringloom.framework.topic.TopicRuntime topicRuntime;
+    private KvRuntime kvRuntime;
 
     /**
      * Creates a runtime for a generated application and configuration.
@@ -136,6 +140,10 @@ public final class RingloomRuntime implements AutoCloseable {
         if (generatedApplication.requiresCorrelationAwareSends()) {
             throw new IllegalStateException("generated application requires correlation-aware native send ABI");
         }
+        if (generatedApplication.requiresKvStores() && !config.kv().enabled()) {
+            throw new IllegalStateException(
+                    "generated application declares KV stores but ringloom.kv.enabled is false");
+        }
         startupStartedNanos = System.nanoTime();
         service = RingloomService.start(config.service().toLowLevelConfig());
         if (metrics instanceof RuntimeRingloomMetrics runtimeMetrics) {
@@ -150,6 +158,9 @@ public final class RingloomRuntime implements AutoCloseable {
         }
         generatedApplication.initializeSerializers(serializers);
         messageExecutionPolicy = createMessageExecutionPolicy();
+        if (config.kv().enabled()) {
+            startKv();
+        }
         if (config.topics().enabled()) {
             startTopics();
         }
@@ -157,6 +168,58 @@ public final class RingloomRuntime implements AutoCloseable {
         if (config.runtime().mode() == RuntimeMode.EXTERNAL) {
             logStartupComplete();
         }
+    }
+
+    /**
+     * Creates the KV runtime, declares stores, and opens them inline (event loops are not running
+     * yet, so this thread may drive native control polling). KV does not depend on framework topics.
+     */
+    private void startKv() {
+        kvRuntime = new KvRuntime(
+                service, config.service().name(), config.kv(), metrics, logger, this::dispatchKvWriterState);
+        java.util.List<GeneratedKvStoreBinding> bindings = generatedApplication.kvStores();
+        // Bindings naming the same store share one reader and one writer (declarations are idempotent;
+        // differing writer configs fail here).
+        for (GeneratedKvStoreBinding binding : bindings) {
+            if (binding.reads()) {
+                kvRuntime.declareReader(binding.store());
+            }
+            if (binding.writes()) {
+                kvRuntime.declareWriter(binding.store(), binding.storeConfig());
+            }
+        }
+        kvRuntime.start();
+        kvRuntime.scheduleAckTimeoutSweep(scheduler);
+        for (GeneratedKvStoreBinding binding : bindings) {
+            generatedClients.put(binding.storeType(), binding.create(this, serializers));
+        }
+    }
+
+    /**
+     * Control-thread sink for KV writer lease transitions; routes them to generated
+     * {@code @RingloomKvWriterStateHandler} methods. Exceptions are caught by the KV runtime.
+     */
+    private void dispatchKvWriterState(KvWriterStateEvent event) {
+        generatedApplication.dispatchKvWriterState(event);
+    }
+
+    /**
+     * Post-poll control work shared by the control agent and {@link #pollControl()}: topic ack
+     * feedback, then KV control work (writer state dispatch, acks, background opens, status refresh).
+     *
+     * @return the amount of work done
+     */
+    private int afterControlPoll() {
+        int work = 0;
+        io.ringloom.framework.topic.TopicRuntime topics = topicRuntime;
+        if (topics != null) {
+            topics.pollAckFeedback();
+        }
+        KvRuntime kv = kvRuntime;
+        if (kv != null) {
+            work += kv.afterControlPoll();
+        }
+        return work;
     }
 
     /**
@@ -256,9 +319,7 @@ public final class RingloomRuntime implements AutoCloseable {
     public int pollControl() {
         ensureStarted();
         int controlWork = service.pollControl(config.runtime().control().pollLimit());
-        if (topicRuntime != null) {
-            topicRuntime.pollAckFeedback();
-        }
+        controlWork += afterControlPoll();
         if (config.runtime().mode() != RuntimeMode.EXTERNAL) {
             return controlWork;
         }
@@ -310,8 +371,8 @@ public final class RingloomRuntime implements AutoCloseable {
             logStartupComplete();
             return;
         }
-        ControlAgent controlAgent =
-                new ControlAgent(service, config.runtime().control().pollLimit());
+        ControlAgent controlAgent = new ControlAgent(
+                "ringloom-control-agent", service, config.runtime().control().pollLimit(), this::afterControlPoll);
         SchedulerAgent schedulerAgent = new SchedulerAgent(scheduler);
         Runnable topicPollHook =
                 (topicRuntime != null && config.topics().coalesceWithMessages()) ? this::pollTopics : null;
@@ -457,6 +518,21 @@ public final class RingloomRuntime implements AutoCloseable {
     }
 
     /**
+     * Returns the KV stores runtime.
+     *
+     * @return the KV runtime
+     * @throws IllegalStateException when {@code ringloom.kv.enabled} is false or the runtime has not
+     *     started
+     */
+    public KvRuntime kv() {
+        KvRuntime kv = kvRuntime;
+        if (kv == null) {
+            throw new IllegalStateException("kv not enabled");
+        }
+        return kv;
+    }
+
+    /**
      * Returns whether generated tracing hooks should call the trace adapter.
      *
      * @return {@code true} when tracing is enabled
@@ -489,6 +565,7 @@ public final class RingloomRuntime implements AutoCloseable {
             closeQuietly(messageLoop, "message event loop");
             closeQuietly(controlLoop, "control event loop");
             closeQuietly(messageExecutionPolicy, "message execution policy");
+            closeQuietly(kvRuntime, "kv runtime");
             closeQuietly(topicRuntime, "topic runtime");
             requestRegistry.completeAll(RingloomHandlerStatus.SHUTDOWN);
             if (metrics instanceof RuntimeRingloomMetrics runtimeMetrics) {

@@ -1,0 +1,45 @@
+        new GeneratedKvStoreBinding() {
+          @Override
+          public Class<?> storeType() {
+            return {{{storeType}}}.class;
+          }
+
+          @Override
+          public String store() {
+            return "{{storeName}}";
+          }
+
+          @Override
+          public boolean reads() {
+            return {{reads}};
+          }
+
+          @Override
+          public boolean writes() {
+            return {{writes}};
+          }
+
+          @Override
+          public io.ringloom.service.KvStoreConfig storeConfig() {
+{{#writes}}            io.ringloom.service.KvStoreConfig defaults = io.ringloom.service.KvStoreConfig.defaults();
+            return new io.ringloom.service.KvStoreConfig(
+                defaults.formatVersion(),
+                {{{maxKeyLength}}},
+                {{{maxValueLength}}},
+                {{{defaultTtlMillis}}},
+                {{{mapSizeHint}}},
+                {{{rollScheme}}},
+                defaults.flags());
+{{/writes}}{{^writes}}            return null;
+{{/writes}}          }
+
+          @Override
+          public int keyLengthHint() {
+            return {{keyLengthHint}};
+          }
+
+          @Override
+          public Object create(RingloomRuntime runtime, SerializerRegistry serializers) {
+            return new {{{generatedStoreName}}}(runtime, serializers);
+          }
+        }{{comma}}

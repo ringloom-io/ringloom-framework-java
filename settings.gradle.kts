@@ -26,5 +26,6 @@ include(
     "samples:order-management",
     "samples:order-management-avaje",
     "samples:market-data-avaje-sbe",
+    "samples:market-data-kv",
     "samples:pricing-requests-avaje",
 )

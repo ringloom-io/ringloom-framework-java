@@ -1,0 +1,20 @@
+
+  @Override
+  public int {{methodName}}({{{parameters}}}) {
+{{{keySource}}}    int $status = KvGeneratedSupport.read(this.reader, $state, $keySegment, $keyLength);
+    if ($status != RingloomStatus.OK) {
+      {{valueName}}.fail($status);
+      return $status;
+    }
+    long $length = $state.outLength()[0];
+    try {
+      {{valueName}}.ok(
+          KvGeneratedSupport.decode(this.{{codec}}Flyweight, this.{{codec}}Decoder, $state, $state.valueScratch(), $length),
+          (int) $length);
+      return RingloomStatus.OK;
+    } catch (RuntimeException $ex) {
+      this.kv.recordDecodeError(this.reader, $ex);
+      {{valueName}}.fail(RingloomHandlerStatus.SERIALIZATION_ERROR);
+      return RingloomHandlerStatus.SERIALIZATION_ERROR;
+    }
+  }

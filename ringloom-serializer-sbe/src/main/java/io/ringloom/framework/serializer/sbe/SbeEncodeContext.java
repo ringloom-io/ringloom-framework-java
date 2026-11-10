@@ -25,6 +25,17 @@ public final class SbeEncodeContext {
     }
 
     /**
+     * Wraps the first {@code length} bytes of a native segment without slicing.
+     *
+     * @param segment the segment, possibly larger than {@code length}
+     * @param length the payload length
+     * @return the reusable Agrona buffer
+     */
+    public MemorySegmentMutableDirectBuffer wrap(MemorySegment segment, long length) {
+        return buffer.wrap(segment, length);
+    }
+
+    /**
      * Returns the reusable mutable Agrona buffer.
      *
      * @return the mutable direct buffer
@@ -44,7 +55,12 @@ public final class SbeEncodeContext {
     public <T> T codec(Class<T> type, Supplier<? extends T> factory) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(factory, "factory");
-        Object codec = codecs.computeIfAbsent(type, ignored -> factory.get());
+        // Plain get/put: a computeIfAbsent capturing lambda would allocate on every call.
+        Object codec = codecs.get(type);
+        if (codec == null) {
+            codec = Objects.requireNonNull(factory.get(), "factory returned null");
+            codecs.put(type, codec);
+        }
         return type.cast(codec);
     }
 }

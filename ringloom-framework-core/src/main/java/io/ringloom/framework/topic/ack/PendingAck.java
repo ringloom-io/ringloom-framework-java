@@ -13,6 +13,7 @@ final class PendingAck {
     long deadlineNanos;
     AckCallback callback;
     Object userContext;
+    AckStatus status;
 
     PendingAck(int slot) {
         this.slot = slot;
@@ -32,5 +33,6 @@ final class PendingAck {
         deadlineNanos = 0L;
         callback = null;
         userContext = null;
+        status = null;
     }
 }

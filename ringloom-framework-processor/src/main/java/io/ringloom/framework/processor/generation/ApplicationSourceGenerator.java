@@ -9,6 +9,9 @@ import io.ringloom.framework.annotation.RingloomSchedule;
 import io.ringloom.framework.processor.ProcessorContext;
 import io.ringloom.framework.processor.TemplateRenderer;
 import io.ringloom.framework.processor.model.Handler;
+import io.ringloom.framework.processor.model.KvMethod;
+import io.ringloom.framework.processor.model.KvStore;
+import io.ringloom.framework.processor.model.KvWriterStateHandler;
 import io.ringloom.framework.processor.model.PartitionKey;
 import io.ringloom.framework.processor.model.SbePayloadModel;
 import io.ringloom.framework.processor.model.Schedule;
@@ -90,6 +93,44 @@ public final class ApplicationSourceGenerator {
             List<io.ringloom.framework.processor.model.TopicHandler> topicHandlers,
             String topicDispatcherName,
             TypeElement origin) {
+        generate(
+                pkg,
+                appName,
+                dispatcherName,
+                service,
+                clients,
+                components,
+                handlers,
+                schedules,
+                topicPublishers,
+                topicHandlers,
+                topicDispatcherName,
+                List.of(),
+                List.of(),
+                origin);
+    }
+
+    /**
+     * Generates the application metadata, including optional topic and KV store bindings.
+     *
+     * @param kvStores               validated KV store interfaces (may be empty)
+     * @param kvWriterStateHandlers  validated KV writer state handlers (may be empty)
+     */
+    public void generate(
+            String pkg,
+            String appName,
+            String dispatcherName,
+            String service,
+            List<TypeElement> clients,
+            List<TypeElement> components,
+            List<Handler> handlers,
+            List<Schedule> schedules,
+            List<io.ringloom.framework.processor.model.TopicPublisher> topicPublishers,
+            List<io.ringloom.framework.processor.model.TopicHandler> topicHandlers,
+            String topicDispatcherName,
+            List<KvStore> kvStores,
+            List<KvWriterStateHandler> kvWriterStateHandlers,
+            TypeElement origin) {
         String qualifiedName = pkg.isEmpty() ? appName : pkg + "." + appName;
         try {
             StringBuilder clientBindings = new StringBuilder();
@@ -116,7 +157,7 @@ public final class ApplicationSourceGenerator {
             model.put("serviceName", SourceHelpers.escape(service));
             model.put("clientBindingSources", clientBindings.toString());
             model.put("componentTypeSources", componentTypeSources(components));
-            model.put("serializerRegistrationSources", serializerRegistrationSources(clients, handlers));
+            model.put("serializerRegistrationSources", serializerRegistrationSources(clients, handlers, kvStores));
             model.put("partitionKeyExtractorSources", partitionKeyExtractorSources(handlers));
             model.put("scheduleRegistrationSources", scheduleRegistrationSources(schedules));
             // Topic bindings.
@@ -130,11 +171,78 @@ public final class ApplicationSourceGenerator {
             model.put("topicPublisherBindingSources", topicPublisherBindings(topicPublishers));
             model.put("topicHandlerBindingSources", topicHandlerBindings(topicHandlers));
             model.put("initialTopicIds", initialTopicIds(topicHandlers));
+            model.put("hasKvStores", !kvStores.isEmpty());
+            model.put("kvStoreBindingSources", kvStoreBindings(kvStores));
+            model.put("hasKvWriterStateHandlers", !kvWriterStateHandlers.isEmpty());
+            model.put("kvWriterStateCases", kvWriterStateCases(kvWriterStateHandlers));
             new SourceWriter(ctx)
                     .writeSourceFile(qualifiedName, origin, templates.render("application.java.mustache", model));
         } catch (IOException ex) {
             ctx.error(origin, "failed to generate application: " + ex.getMessage());
         }
+    }
+
+    private String kvStoreBindings(List<KvStore> kvStores) throws IOException {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < kvStores.size(); i++) {
+            KvStore store = kvStores.get(i);
+            String storeType = store.storeInterface().getQualifiedName().toString();
+            String pkg = SourceHelpers.packageName(ctx.elementUtils(), store.storeInterface());
+            Map<String, Object> model = new java.util.HashMap<>();
+            model.put("storeType", storeType);
+            model.put("storeName", SourceHelpers.escape(store.name()));
+            model.put("reads", store.reads());
+            model.put("writes", store.writes());
+            model.put(
+                    "maxKeyLength",
+                    store.maxKeyLength() > 0 ? String.valueOf(store.maxKeyLength()) : "defaults.maxKeyLength()");
+            model.put(
+                    "maxValueLength",
+                    store.maxValueLength() >= 0 ? store.maxValueLength() + "L" : "defaults.maxValueLength()");
+            model.put(
+                    "defaultTtlMillis",
+                    store.defaultTtlMillis() >= 0 ? store.defaultTtlMillis() + "L" : "defaults.defaultTtlMillis()");
+            model.put("mapSizeHint", store.mapSizeHint() >= 0 ? store.mapSizeHint() + "L" : "defaults.mapSizeHint()");
+            model.put(
+                    "rollScheme",
+                    store.rollScheme().isEmpty()
+                            ? "defaults.topicRollScheme()"
+                            : "\"" + SourceHelpers.escape(store.rollScheme()) + "\"");
+            model.put("keyLengthHint", store.keyLengthHint());
+            model.put(
+                    "generatedStoreName",
+                    pkg.isEmpty() ? store.generatedSimpleName() : pkg + "." + store.generatedSimpleName());
+            model.put("comma", i + 1 == kvStores.size() ? "" : ",");
+            out.append(templates.render("application-kv-store-binding.java.mustache", model));
+        }
+        return out.toString();
+    }
+
+    private static String kvWriterStateCases(List<KvWriterStateHandler> handlers) {
+        Map<String, StringBuilder> byStore = new java.util.TreeMap<>();
+        for (KvWriterStateHandler handler : handlers) {
+            byStore.computeIfAbsent(handler.store(), ignored -> new StringBuilder())
+                    .append("        try {\n")
+                    .append("          component(")
+                    .append(handler.component().getQualifiedName())
+                    .append(".class).")
+                    .append(handler.method().getSimpleName())
+                    .append("(event);\n")
+                    .append("        } catch (RuntimeException ex) {\n")
+                    .append("          if (failure == null) {\n")
+                    .append("            failure = ex;\n")
+                    .append("          }\n")
+                    .append("        }\n");
+        }
+        StringBuilder out = new StringBuilder();
+        for (Map.Entry<String, StringBuilder> entry : byStore.entrySet()) {
+            out.append("      case \"")
+                    .append(SourceHelpers.escape(entry.getKey()))
+                    .append("\" -> {\n")
+                    .append(entry.getValue())
+                    .append("      }\n");
+        }
+        return out.toString();
     }
 
     private String topicPublisherBindings(List<io.ringloom.framework.processor.model.TopicPublisher> topicPublishers)
@@ -203,7 +311,22 @@ public final class ApplicationSourceGenerator {
     }
 
     public String serializerRegistrationSources(List<TypeElement> clients, List<Handler> handlers) {
+        return serializerRegistrationSources(clients, handlers, List.of());
+    }
+
+    /**
+     * Renders serializer registrations for clients, handlers, and KV store value/key types.
+     *
+     * @param clients  the client interfaces
+     * @param handlers the handlers
+     * @param kvStores the KV store interfaces
+     * @return the registration source
+     */
+    public String serializerRegistrationSources(
+            List<TypeElement> clients, List<Handler> handlers, List<KvStore> kvStores) {
         Map<String, String> registrations = new LinkedHashMap<>();
+        Set<String> sbeEncoderTypes = new java.util.HashSet<>();
+        Set<String> sbeDecoderTypes = new java.util.HashSet<>();
         Set<String> explicitForyTypes = new TreeSet<>();
         Set<String> defaultForyTypes = new TreeSet<>();
         for (TypeElement client : clients) {
@@ -224,6 +347,7 @@ public final class ApplicationSourceGenerator {
                 if (!SbePayloadModel.usesSbe(request.serializer(), payloadType)) {
                     continue;
                 }
+                sbeEncoderTypes.add(payloadType);
                 registrations.putIfAbsent(
                         "client|sbe|" + request.templateId() + "|" + payloadType,
                         sbeClientRegistrationSource(Symbols.SBE_SERIALIZER, request.templateId(), payloadType));
@@ -243,16 +367,64 @@ public final class ApplicationSourceGenerator {
             if (!SbePayloadModel.usesSbe(annotation.serializer(), payloadType)) {
                 continue;
             }
+            sbeDecoderTypes.add(payloadType);
             registrations.putIfAbsent(
                     "handler|sbe|" + handler.templateId() + "|" + payloadType,
                     sbeHandlerRegistrationSource(Symbols.SBE_SERIALIZER, handler.templateId(), payloadType));
         }
+        collectKvRegistrations(
+                kvStores, registrations, sbeEncoderTypes, sbeDecoderTypes, explicitForyTypes, defaultForyTypes);
         StringBuilder out = new StringBuilder();
         for (String source : registrations.values()) {
             out.append(source);
         }
         out.append(foryRegistrationSource(explicitForyTypes, defaultForyTypes));
         return out.toString();
+    }
+
+    /**
+     * KV values have no template id; SBE codecs are registered with template id {@code 0} unless a
+     * client or handler already registers the same type.
+     */
+    private void collectKvRegistrations(
+            List<KvStore> kvStores,
+            Map<String, String> registrations,
+            Set<String> sbeEncoderTypes,
+            Set<String> sbeDecoderTypes,
+            Set<String> explicitForyTypes,
+            Set<String> defaultForyTypes) {
+        for (KvStore store : kvStores) {
+            if (store.keyKind() == KvStore.KeyKind.SERIALIZER) {
+                TypeElement keyElement = ctx.elementUtils().getTypeElement(store.keyType());
+                if (keyElement != null) {
+                    collectForyTypes(store.keySerializer(), keyElement.asType(), explicitForyTypes, defaultForyTypes);
+                }
+            }
+            for (KvMethod method : store.methods()) {
+                if (!method.hasCodec()) {
+                    continue;
+                }
+                String valueType = method.valueType();
+                if (SbePayloadModel.usesSbe(method.serializer(), valueType)) {
+                    if (method.shape() == KvMethod.Shape.PUT) {
+                        if (sbeEncoderTypes.add(valueType)) {
+                            registrations.putIfAbsent(
+                                    "kv|sbe|encoder|" + valueType,
+                                    sbeClientRegistrationSource(Symbols.SBE_SERIALIZER, 0, valueType));
+                        }
+                    } else if (sbeDecoderTypes.add(valueType)) {
+                        registrations.putIfAbsent(
+                                "kv|sbe|decoder|" + valueType,
+                                sbeHandlerRegistrationSource(Symbols.SBE_SERIALIZER, 0, valueType));
+                    }
+                    continue;
+                }
+                TypeElement valueElement = ctx.elementUtils().getTypeElement(valueType);
+                if (valueElement != null) {
+                    collectForyTypes(method.serializer(), valueElement.asType(), explicitForyTypes, defaultForyTypes);
+                }
+            }
+        }
     }
 
     private void collectForyClientTypes(

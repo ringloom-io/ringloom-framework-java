@@ -36,6 +36,60 @@ final class ForyMessageCodecTest {
     }
 
     @Test
+    void decodesLengthLimitedPayloadFromLargerHeapAndNativeSegments() {
+        // Given
+        ForySerializerConfig config =
+                new ForySerializerConfig(true, false, false, List.of(SampleMessage.class.getName()), 1024);
+        ForyMessageCodec<SampleMessage> codec = new ForyMessageCodec<>(
+                new ForySerializerModule().createFory(config), SampleMessage.class, config.maxPayloadBytes());
+        SampleMessage message = new SampleMessage(42, "ringloom");
+        EncodeContext encodeContext = new EncodeContext();
+        DecodeContext decodeContext = new DecodeContext();
+        int length = codec.encodedLength(message, encodeContext);
+
+        try (Arena arena = Arena.ofConfined()) {
+            var nativeScratch = arena.allocate(length + 64L);
+            nativeScratch.fill((byte) 0x7F);
+            var heapScratch = java.lang.foreign.MemorySegment.ofArray(new byte[length + 64]);
+            heapScratch.fill((byte) 0x7F);
+
+            // When
+            int written = codec.encode(message, encodeContext.buffer().wrap(nativeScratch, length), encodeContext);
+            java.lang.foreign.MemorySegment.copy(nativeScratch, 0, heapScratch, 0, length);
+            SampleMessage fromNative = codec.decode(decodeContext.buffer().wrap(nativeScratch, length), decodeContext);
+            SampleMessage fromHeap = codec.decode(decodeContext.buffer().wrap(heapScratch, length), decodeContext);
+
+            // Then
+            assertThat(written).isEqualTo(length);
+            assertThat(nativeScratch.get(java.lang.foreign.ValueLayout.JAVA_BYTE, length))
+                    .isEqualTo((byte) 0x7F);
+            assertThat(fromNative).isEqualTo(message);
+            assertThat(fromHeap).isEqualTo(message);
+        }
+    }
+
+    @Test
+    void rejectsEncodeIntoTooShortLengthLimitedTarget() {
+        // Given
+        ForySerializerConfig config =
+                new ForySerializerConfig(true, false, false, List.of(SampleMessage.class.getName()), 1024);
+        ForyMessageCodec<SampleMessage> codec = new ForyMessageCodec<>(
+                new ForySerializerModule().createFory(config), SampleMessage.class, config.maxPayloadBytes());
+        SampleMessage message = new SampleMessage(42, "ringloom");
+        EncodeContext encodeContext = new EncodeContext();
+        int length = codec.encodedLength(message, encodeContext);
+
+        try (Arena arena = Arena.ofConfined()) {
+            var scratch = arena.allocate(length + 64L);
+
+            // When / Then
+            assertThatThrownBy(() ->
+                            codec.encode(message, encodeContext.buffer().wrap(scratch, length - 1L), encodeContext))
+                    .isInstanceOf(RingloomSerializationException.class);
+        }
+    }
+
+    @Test
     void roundTripsGeneratedTypesWithRequiredRegistration() {
         // Given
         ForySerializerConfig config = new ForySerializerConfig(true, false, false, List.of(), 1024);

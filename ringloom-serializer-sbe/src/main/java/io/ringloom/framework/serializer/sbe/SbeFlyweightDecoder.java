@@ -38,7 +38,7 @@ public final class SbeFlyweightDecoder<T> implements FlyweightDecoder<T> {
     @Override
     public T wrap(MemorySegment payload, DecodeContext context) {
         SbeDecodeContext sbeContext = contexts.get();
-        MemorySegmentDirectBuffer buffer = sbeContext.wrap(payload);
+        MemorySegmentDirectBuffer buffer = sbeContext.wrap(payload, DecodeContext.payloadLength(context, payload));
         T flyweight = sbeContext.flyweight(flyweightType, flyweightFactory);
         return wrapOperation.wrap(flyweight, buffer, sbeContext);
     }
